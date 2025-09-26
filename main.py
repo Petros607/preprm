@@ -2,6 +2,8 @@ import logging
 from logger import setup_logging
 from db import DatabaseManager
 from llm_client import LlmClient
+import csv
+
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -9,29 +11,51 @@ logger = logging.getLogger(__name__)
 def main():
     db = DatabaseManager()
     llm = LlmClient()
-    db.create_temp_person_table()
-    # records = db.get_temp_person_data(10)
-    # for record in records:
-    #     fn, ln = record["first_name"], record["last_name"]
+    
+    records = db.get_temp_person_data(300)
 
-    #     parsed = llm.parse_name(fn, ln)
-    #     if is_valid_person(parsed):
-    #         print("✅ Пригодная запись:")
-    #         logger.info(f"ФИ: {parsed["cleaned_first_name"]} {parsed["cleaned_last_name"]}")
-    #         logger.info(f"Остальное: {parsed["additional_info"].strip()}\n")
-    #     else:
-    #         print("❌ Запись непригодна")
-    #         logger.info(f"ФИ: {parsed["cleaned_first_name"]} {parsed["cleaned_last_name"]}")
-    #         logger.info(f"Остальное: {parsed["additional_info"].strip()}\n")
+    with open("processed_persons.csv", mode="w", newline="", encoding="utf-8") as csvfile:
+        fieldnames = [
+            "telegram_id",
+            "first_name",
+            "last_name",
+            "about",
+            "valid",
+            "cleaned_first_name",
+            "cleaned_last_name",
+            "additional_info",
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for record in records:
+            fn, ln = record["first_name"], record["last_name"]
+
+            parsed = llm.parse_name(fn, ln)
+            valid = is_valid_person(parsed)
+
+            row = {
+                    "telegram_id": record.get("telegram_id", ""),
+                    "first_name": fn,
+                    "last_name": ln,
+                    "about": record.get("about", ""),
+                    "valid": valid,
+                    "cleaned_first_name": parsed["cleaned_first_name"],
+                    "cleaned_last_name": parsed["cleaned_last_name"],
+                    "additional_info": parsed["additional_info"],
+                }
+            writer.writerow(row)
+
+            if valid:
+                logger.info(f"✅ Пригодная запись: {parsed['cleaned_first_name']} {parsed['cleaned_last_name']}")
+            else:
+                logger.info(f"❌ Непригодная запись: {fn} {ln}")
     
     db.close()
 
 def is_valid_person(parsed: dict) -> bool:
-    """
-    Проверяет пригодность данных:
-    - должны быть и имя, и фамилия
-    """
     return bool(parsed.get("cleaned_first_name") and parsed.get("cleaned_last_name"))
+
 
 
 def test_db():
