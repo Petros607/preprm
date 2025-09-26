@@ -24,7 +24,7 @@ class DatabaseManager:
                 port=self.config.port
             )
             self.is_connected = True
-            self.logger.info(
+            self.logger.debug(
                 f"Успешное подключение к БД: {self.config.host}:{self.config.port}/{self.config.database}"
             )
             return True
@@ -37,6 +37,98 @@ class DatabaseManager:
             self.logger.error(f"Неожиданная ошибка при подключении: {e}")
             self.is_connected = False
             return False
+        
+    def create_temp_person_table(self) -> bool:
+        """Создание таблицы с распарсенными JSON данными"""
+        if not self.is_connected or not self.connection:
+            self.logger.error("Нет подключения к БД")
+            return False
+            
+        try:
+            query1 = """
+            DROP TABLE IF EXISTS person_source_data_unique;
+            CREATE TABLE person_source_data_unique AS
+            SELECT DISTINCT ON ((data->>'telegram_id')::bigint) *
+            FROM person_source_data 
+            WHERE data ? 'about'  -- фильтр ставим ДО DISTINCT ON
+            ORDER BY (data->>'telegram_id')::bigint, fetch_date DESC;
+            """
+
+            query2 = """
+            DROP TABLE IF EXISTS temp_person_table;
+            CREATE TABLE temp_person_table AS
+            SELECT 
+                (data->>'telegram_id')::bigint AS telegram_id,
+                data->>'first_name' AS first_name,
+                data->>'last_name' AS last_name,
+                data->>'about' AS about,
+                data->>'username' AS username,
+                data->>'lang_code' AS lang_code,
+                data->>'phone' AS phone,
+                (data->>'bot')::boolean AS bot,
+                (data->>'fake')::boolean AS fake,
+                (data->>'scam')::boolean AS scam,
+                (data->>'deleted')::boolean AS deleted,
+                (data->>'premium')::boolean AS premium,
+                (data->>'verified')::boolean AS verified,
+                (data->>'restricted')::boolean AS restricted,
+                (data->>'username_is_actual')::boolean AS username_is_actual,
+                data->'personal_channel'->>'title' AS personal_channel_title,
+                data->'personal_channel'->>'username' AS personal_channel_username,
+                data->'personal_channel'->>'about' AS personal_channel_about,
+                (data->'personal_channel'->>'channel_id')::bigint AS personal_channel_id,
+                (data->'personal_channel'->>'participants_count')::integer AS personal_channel_participants_count
+            FROM person_source_data_unique 
+            WHERE data ? 'about'
+            """
+            
+            cursor = self.connection.cursor()
+            cursor.execute(query1)
+            self.connection.commit()
+            cursor.execute(query2)
+            cursor.close()
+            
+            self.logger.info("Таблица temp_person_table успешно создана")
+            return True
+            
+        except psycopg2.Error as e:
+            self.logger.error(f"Ошибка создания временной таблицы: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return False
+        except Exception as e:
+            self.logger.error(f"Неожиданная ошибка при создании таблицы: {e}")
+            return False
+
+    def get_temp_person_data(self, limit: Optional[int] = None) -> List[Dict]:
+        """Получение данных из временной таблицы temp_person_table"""
+        if not self.is_connected or not self.connection:
+            self.logger.warning("Попытка получить данные без активного подключения к БД")
+            return []
+            
+        try:
+            cursor = self.connection.cursor(cursor_factory=RealDictCursor)
+            query = "SELECT * FROM temp_person_table"
+            params = None
+            
+            if limit and limit > 0:
+                query += " LIMIT %s"
+                params = (limit,)
+            
+            self.logger.debug(f"Выполнение запроса: {query} с параметрами: {params}")
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            cursor.close()
+            
+            self.logger.info(f"Успешно получено {len(results)} записей из temp таблицы")
+            return results
+            
+        except psycopg2.Error as e:
+            self.logger.error(f"Ошибка выполнения SQL запроса: {e}")
+            return []
+        except Exception as e:
+            self.logger.error(f"Неожиданная ошибка при получении данных: {e}")
+            return []
     
     def get_table_person_data(self, limit: Optional[int] = None) -> List[Dict]:
         """Получение данных из таблицы person_source_data"""
@@ -46,7 +138,7 @@ class DatabaseManager:
             
         try:
             cursor = self.connection.cursor(cursor_factory=RealDictCursor)
-            query = "SELECT * FROM person_source_data"
+            query = "SELECT data FROM person_source_data WHERE data ? 'about'"
             params = None
             
             if limit and limit > 0:
