@@ -12,6 +12,9 @@ setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def main():
+    test_mdsearch()
+
+def test_mdsearch():
     perp = PerplexityClient()
     db = DatabaseManager()
 
@@ -19,8 +22,9 @@ def main():
     date_str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")
     exporter = MarkdownExporter(f"{date_str}_person_reports")
     count_of_persons = len(persons)
-    i = 79
-    while i < count_of_persons:
+    # i = 79
+    # while i < count_of_persons:
+    for i in [73, 74, 79, 80]:
         person = persons[i]
         ans, urls = perp.search_info(
             first_name=person.get("cleaned_first_name"),
@@ -45,7 +49,7 @@ def main():
             print(f"✅ Создан файл: {filepath}")
         else:
             print("❌ Ошибка создания файла")
-        i+=1
+        # i+=1
 
 def create_table_for_perp():
     db = DatabaseManager() 
