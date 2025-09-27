@@ -19,4 +19,3 @@ class LlmConfig:
     """Конфигурация подключения к llm"""
     key: Optional[str] = os.getenv('OPENROUTER_API_KEY')
     url: str = os.getenv('LLM_URL', 'https://openrouter.ai/api/v1')
-

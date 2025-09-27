@@ -162,6 +162,36 @@ class DatabaseManager:
             self.logger.error(f"Неожиданная ошибка при получении данных: {e}")
             return []
         
+    def get_perp_person_data(self, limit: Optional[int] = None) -> List[Dict]:
+        """Получение данных из таблицы for_perp_persons"""
+        if not self.is_connected or not self.connection:
+            self.logger.warning("Попытка получить данные без активного подключения к БД")
+            return []
+            
+        try:
+            cursor = self.connection.cursor(cursor_factory=RealDictCursor)
+            query = "SELECT * FROM for_perp_persons"
+            params = None
+            
+            if limit and limit > 0:
+                query += " LIMIT %s"
+                params = (limit,)
+            
+            self.logger.debug(f"Выполнение запроса: {query} с параметрами: {params}")
+            cursor.execute(query, params)
+            results = cursor.fetchall()
+            cursor.close()
+            
+            self.logger.info(f"Успешно получено {len(results)} записей из БД")
+            return results
+            
+        except psycopg2.Error as e:
+            self.logger.error(f"Ошибка выполнения SQL запроса: {e}")
+            return []
+        except Exception as e:
+            self.logger.error(f"Неожиданная ошибка при получении данных: {e}")
+            return []
+        
     def test_connection(self) -> bool:
         """Тестирование подключения к БД"""
         if not self.is_connected or not self.connection:

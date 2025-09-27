@@ -2,6 +2,7 @@ import logging
 from logger import setup_logging
 from db import DatabaseManager
 from llm_client import LlmClient
+from perp_client import PerplexityClient
 import csv
 import os
 
@@ -9,7 +10,20 @@ setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def main():
-    print(1)
+    perp = PerplexityClient()
+    db = DatabaseManager()
+
+    persons = db.get_perp_person_data(1)
+    for person in persons:
+        result = perp.search_info(
+            first_name=person.get("cleaned_first_name"),
+            last_name=person.get("cleaned_last_name"),
+            additional_info=person.get("additional_info"),
+            # birth_date=person.get("additional_info"),,
+            personal_channel_name=person.get("personal_channel_username"),
+            personal_channel_about=person.get("personal_channel_about")
+        )
+        print("Справка о человеке:\n", result)
 
 def create_table_for_perp():
     db = DatabaseManager() 
