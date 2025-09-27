@@ -2,7 +2,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List, Dict, Optional
 import logging
-
+import csv
+import pandas as pd
+from io import StringIO
 from config import DatabaseConfig
 
 class DatabaseManager:
@@ -225,6 +227,67 @@ class DatabaseManager:
         ORDER BY ordinal_position
         """
         return self.execute_query(query, (table_name,))
+    
+    def create_table_from_csv(self, csv_file_path: str, table_name: str,
+                                   delimiter: str = ',', encoding: str = 'utf-8') -> bool:
+        """
+        Создает таблицу в БД из CSV файла
+        """
+        if not self.is_connected:
+            self.logger.error("Нет подключения к БД")
+            return False
+        try:
+            self.logger.info(f"Чтение CSV файла: {csv_file_path}")
+            df = pd.read_csv(csv_file_path, delimiter=delimiter, encoding=encoding)
+            self.logger.info(f"Прочитано {len(df)} строк, {len(df.columns)} колонок")
+            self.logger.info(f"Колонки: {list(df.columns)}")
+            
+            type_mapping = {
+                'int64': 'BIGINT',
+                'float64': 'DOUBLE PRECISION',
+                'bool': 'BOOLEAN',
+                'datetime64[ns]': 'TIMESTAMP',
+                'object': 'TEXT'
+            }
+            
+            columns_sql = []
+            for col_name, dtype in df.dtypes.items():
+                pg_type = type_mapping.get(str(dtype), 'TEXT')
+                columns_sql.append(f'"{col_name}" {pg_type}')
+            
+            create_table_sql = f'CREATE TABLE IF NOT EXISTS "{table_name}" (\n'
+            create_table_sql += ',\n'.join(columns_sql)
+            create_table_sql += '\n);'
+            
+            drop_sql = f'DROP TABLE IF EXISTS "{table_name}";'
+            cursor = self.connection.cursor()
+            cursor.execute(drop_sql)
+            self.logger.info(f"Таблица {table_name} удалена (replace mode)")
+            
+            cursor.execute(create_table_sql)
+            self.logger.info(f"Таблица {table_name} создана")
+            
+            if not df.empty:
+                output = StringIO()
+                df.to_csv(output, sep='\t', header=False, index=False, quoting=csv.QUOTE_NONE, escapechar='\\')
+                output.seek(0)
+                
+                cursor.copy_from(output, table_name, null='', sep='\t')
+                self.logger.info(f"Данные скопированы в таблицу {table_name}")
+            
+            self.connection.commit()
+            cursor.close()
+            
+            self.logger.info(f"Таблица {table_name} успешно создана из CSV файла")
+            self.logger.info(f"Добавлено {len(df)} записей")
+            
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка создания таблицы из CSV: {e}")
+            if self.connection:
+                self.connection.rollback()
+            return False
     
     def close(self) -> None:
         """Закрытие соединения с БД"""

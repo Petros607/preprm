@@ -20,6 +20,7 @@ class LlmClient:
         """
         try:
             completion = self.client.chat.completions.create(
+                # model="qwen/qwen3-14b:free",
                 model="qwen/qwen3-14b:free",
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": response_format},
@@ -74,3 +75,59 @@ LN: "{last_name or ''}"
             "cleaned_last_name": result.get("cleaned_last_name", ""),
             "additional_info": result.get("additional_info", ""),
         }
+
+    def parse_names_batch(self, records: list[dict], batch_size: int = 20) -> dict:
+        """
+        Обрабатывает список записей пачками.
+        records: список словарей {"first_name": ..., "last_name": ...}
+        Возвращает список словарей с результатами в том же порядке.
+        """
+        results = []
+        for i in range(0, len(records), batch_size):
+            batch = records[i:i + batch_size]
+            prompt = f"""
+Ты — ассистент для обработки данных о людях. Твоя задача — корректно извлечь имя, фамилию и дополнительную информацию из предоставленных данных.
+## ИНСТРУКЦИИ:
+1. **Анализ полей**: Внимательно изучи поля first_name, last_name и about
+2. **Извлечение имени и фамилии**:
+   - Имя и фамилия должны быть реалистичными (минимум 2 символа)
+   - Пропускай односимвольные имена/фамилии (кроме общепринятых как "Al")
+   - Если в одном поле содержится и имя и фамилия — раздели их
+   - Приоритет: сначала попробуй выделить из first_name + last_name, затем из about
+3. **Дополнительная информация, которая стоит внимания**:
+   - Профессия, должность, специализация
+   - Контактные данные (email, сайт, соцсети)
+   - Ключевые навыки и компетенции
+   - Компания или проект
+4. **Фильтрация мусора**: Игнорируй случайные слова, не несущие смысловой нагрузки
+## ФОРМАТ ОТВЕТА:
+Верни ТОЛЬКО JSON-объект в точном формате:
+{{
+    "0": {{
+        "cleaned_first_name": "Iaroslav",
+        "cleaned_last_name": "Isaev", 
+        "additional_info": ""
+    }},
+    "1": {{
+        "cleaned_first_name": "",
+        "cleaned_last_name": "",
+        "additional_info": "On a Vibration Mode"
+    }}
+}}
+## ДАННЫЕ ДЛЯ ОБРАБОТКИ (batch_size: {len(batch)}):
+{json.dumps([{"index": idx, "first_name": r.get("first_name",""), "last_name": r.get("last_name",""), "about": r.get("about","")} for idx, r in enumerate(batch)], ensure_ascii=False, indent=2)}
+"""
+            response = self.ask_llm(prompt, response_format="json_object")
+            # if isinstance(response, dict):
+                # ordered = sorted(response, key=lambda x: x.get("index", 0))
+                # results.extend(ordered)
+        results = response # TODO
+            # else:
+            #     self.logger.warning(f"Некорректный ответ от LLM: {response}")
+            #     results.extend({"index": -1:
+            #         {
+            #         "cleaned_first_name": "",
+            #         "cleaned_last_name": "",
+            #         "additional_info": ""
+            #     } * len(batch))
+        return results
