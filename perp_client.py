@@ -50,6 +50,7 @@ class PerplexityClient:
             )
             
             content = completion.choices[0].message.content
+            urls = self.extract_urls_from_response(completion)
             
             if response_format == "json_object":
                 try:
@@ -58,11 +59,27 @@ class PerplexityClient:
                     self.logger.warning(f"Perplexity вернула невалидный JSON: {content}")
                     return {}
                     
-            return content
+            return content, urls
             
         except Exception as e:
             self.logger.error(f"Ошибка при вызове Perplexity: {e}")
             return {} if response_format == "json_object" else ""
+        
+    def extract_urls_from_response(self, completion_response) -> List[Dict[str, str]]:
+        """
+        Извлекает все URL из ответа Perplexity
+        """
+        try:
+            message = completion_response.choices[0].message
+            urls = []
+            if hasattr(message, 'annotations') and message.annotations:
+                for annotation in message.annotations:
+                    if hasattr(annotation, 'url_citation') and annotation.url_citation:
+                        urls.append(annotation.url_citation.url,)
+            return urls
+        except Exception as e:
+            self.logger.error(f"Ошибка извлечения URL: {e}")
+            return []
 
     def ask_sonar(self, 
                  prompt: str, 
@@ -104,9 +121,8 @@ class PerplexityClient:
     2. **Выдели ключевые аспекты** личности и деятельности
     3. **Используй профессиональный, но живой язык**
     4. **Если данных мало** - сделай выводы на основе того, что есть
-
     ## ФОРМАТ ОТВЕТА:
-    Верни ТОЛЬКО текст справки без заголовков и дополнительных комментариев.
+    Верни ТОЛЬКО текст справки без дополнительных комментариев в md формате.
         """.strip()
 
         return self.ask_perplexity(

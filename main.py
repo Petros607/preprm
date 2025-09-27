@@ -3,8 +3,10 @@ from logger import setup_logging
 from db import DatabaseManager
 from llm_client import LlmClient
 from perp_client import PerplexityClient
+from md_exporter import MarkdownExporter
 import csv
 import os
+import datetime
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -13,17 +15,37 @@ def main():
     perp = PerplexityClient()
     db = DatabaseManager()
 
-    persons = db.get_perp_person_data(1)
-    for person in persons:
-        result = perp.search_info(
+    persons = db.get_perp_person_data()
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")
+    exporter = MarkdownExporter(f"{date_str}_person_reports")
+    count_of_persons = len(persons)
+    i = 79
+    while i < count_of_persons:
+        person = persons[i]
+        ans, urls = perp.search_info(
             first_name=person.get("cleaned_first_name"),
             last_name=person.get("cleaned_last_name"),
             additional_info=person.get("additional_info"),
             # birth_date=person.get("additional_info"),,
             personal_channel_name=person.get("personal_channel_username"),
-            personal_channel_about=person.get("personal_channel_about")
+            personal_channel_about=person.get("personal_channel_about"),
+            temperature=0.1
         )
-        print("Справка о человеке:\n", result)
+        # print("\n" + ans + "\n")
+        # print(urls)
+        filepath = exporter.export_to_md(
+            first_name=person.get("cleaned_first_name", "Unknown"),
+            last_name=person.get("cleaned_last_name", "Unknown"),
+            content=ans,
+            urls=urls,
+            personal_channel=person.get('personal_channel_username', '')
+        )
+        
+        if filepath:
+            print(f"✅ Создан файл: {filepath}")
+        else:
+            print("❌ Ошибка создания файла")
+        i+=1
 
 def create_table_for_perp():
     db = DatabaseManager() 
