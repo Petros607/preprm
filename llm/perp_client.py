@@ -1,6 +1,6 @@
 from typing import Any
 
-from base_llm_client import BaseLLMClient
+from llm.base_llm_client import BaseLLMClient
 from config import LlmConfig
 
 

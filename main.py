@@ -4,11 +4,11 @@ import logging
 from typing import Any
 
 import config
-from db import DatabaseManager
-from llm_client import LlmClient
+from utils.db import DatabaseManager
+from llm.llm_client import LlmClient
 from logger import setup_logging
-from md_exporter import MarkdownExporter
-from perp_client import PerplexityClient
+from utils.md_exporter import MarkdownExporter
+from llm.perp_client import PerplexityClient
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ def test_mdsearch(start_position: int, row_count: int) -> None:
         SET summary = %s, urls = %s WHERE person_id = %s"
 
     date_str: str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")
-    exporter = MarkdownExporter(f"{date_str}_person_reports")
+    exporter = MarkdownExporter(f"data/{date_str}_person_reports")
 
     for person in persons:
         process_person_md(db, person, update_query, exporter, perp)
@@ -226,8 +226,12 @@ def main() -> None:
                         help="Обработка записей через LLM")
     parser.add_argument("--mdsearch", action="store_true",
                         help="Поиск информации и экспорт в Markdown")
-    parser.add_argument("--start", type=int, default=0, help="Начальная позиция записи")
-    parser.add_argument("--count", type=int, default=-1, help="Количество записей")
+    parser.add_argument("--start", type=int, default=0, 
+                        help="Начальная позиция записи")
+    parser.add_argument("--count", type=int, default=-1, 
+                        help="Количество записей")
+    parser.add_argument("--fast_test_llm", action="store_true", 
+                        help="Быстрый тест llm")
     args = parser.parse_args()
 
     if args.clean_db:
@@ -236,6 +240,9 @@ def main() -> None:
         test_llm(start_position=args.start, row_count=args.count)
     elif args.mdsearch:
         test_mdsearch(start_position=args.start, row_count=args.count)
+    elif args.fast_test_llm:
+        test_llm(start_position=0, row_count=20)
+        test_mdsearch(start_position=-1, row_count=-1)
     else:
         parser.print_help()
 
