@@ -22,7 +22,6 @@ def clean_and_create_db() -> None:
     """
     logger.info("Начинаем очистку базы данных и создание новых таблиц.")
     db = DatabaseManager()
-
     db.create_cleaned_table(
         source_table_name=config.source_table_name,
         new_table_name=config.cleaned_table_name
@@ -31,7 +30,6 @@ def clean_and_create_db() -> None:
         source_table_name=config.cleaned_table_name,
         result_table_name=config.result_table_name
     )
-
     db.close()
     logger.info("База данных успешно подготовлена.")
 
@@ -51,6 +49,59 @@ def transform_record_to_chunk(data: list[dict[str, Any]]) -> dict[int, dict[str,
             "about": row.get('about') or ""
         }
     return result
+
+
+def safe_execute(db: DatabaseManager, query: str, params: tuple[Any, ...]) -> bool:
+    """
+    Выполняет SQL-запрос и логирует ошибки.
+    :param db: объект DatabaseManager
+    :param query: SQL-запрос
+    :param params: параметры для запроса
+    :return: True, если была изменена хотя бы одна строка
+    """
+    try:
+        result = db.execute_query(query, params)
+        affected = result[0].get('affected_rows', 0) if result else 0
+        return affected > 0
+    except Exception as e:
+        logger.error(f"Ошибка при выполнении запроса: {e}")
+        return False
+
+
+def process_llm_batch(db: DatabaseManager, chunk: dict[int, dict[str, str]],
+                      update_query: str, llm: LlmClient
+                      ) -> int:
+    """
+    Обрабатывает один батч записей через LLM и обновляет базу.
+    :param db: объект DatabaseManager
+    :param chunk: батч записей
+    :param update_query: SQL для обновления
+    :param llm: объект LlmClient
+    :return: количество успешно обновлённых строк
+    """
+    parsed_chunk = llm.parse_names_and_about_chunk(chunk)
+    count_of_affected_rows = 0
+
+    if not parsed_chunk:
+        logger.warning("Батч не обработался ИИ!")
+        return 0
+
+    for data in parsed_chunk.values():
+        params = (
+            data.get('meaningful_first_name', ''),
+            data.get('meaningful_last_name', ''),
+            data.get('meaningful_about', ''),
+            bool(data.get('meaningful_first_name')
+                 and data.get('meaningful_last_name')
+                 and data.get('meaningful_about')),
+            data.get('person_id')
+        )
+        if safe_execute(db, update_query, params):
+            count_of_affected_rows += 1
+        else:
+            logger.info(f"БД не изменила строку с person_id {data.get('person_id')}")
+
+    return count_of_affected_rows
 
 
 def test_llm() -> None:
@@ -74,57 +125,66 @@ def test_llm() -> None:
     i = 0
     retry = 0
 
-    update_query = f"""
-        UPDATE {config.result_table_name}
-        SET meaningful_first_name = %s,
-            meaningful_last_name = %s,
-            meaningful_about = %s,
-            valid = %s
-        WHERE person_id = %s
-    """.strip()
+    update_query = f"UPDATE {config.result_table_name} \
+        SET meaningful_first_name = %s, meaningful_last_name = %s, \
+            meaningful_about = %s, valid = %s WHERE person_id = %s"
 
     while i < total:
         record_chunk = records[i:i + CHUNK_SIZE]
         chunk = transform_record_to_chunk(record_chunk)
-        parsed_chunk = llm.parse_names_and_about_chunk(chunk)
-        count_of_affected_rows = 0
+        count_of_affected_rows = process_llm_batch(db, chunk, update_query, llm)
 
-        if not parsed_chunk:
-            logger.warning(f"Батч с {i} по {i + CHUNK_SIZE} \
-                           не обработался ИИ! Попытка №{retry}")
+        if count_of_affected_rows == 0:
+            logger.warning(f"Батч с {i} по {i + CHUNK_SIZE} не обработался ИИ! "
+                           "Попытка №{retry}")
             retry += 1
             if retry > 3:
                 retry = 0
         else:
             retry = 0
-            for data in parsed_chunk.values():
-                try:
-                    params = (
-                        data.get('meaningful_first_name', ''),
-                        data.get('meaningful_last_name', ''),
-                        data.get('meaningful_about', ''),
-                        bool(data.get('meaningful_first_name')
-                             and data.get('meaningful_last_name')
-                             and data.get('meaningful_about')),
-                        data.get('person_id')
-                    )
-                    result = db.execute_query(update_query, params)
-                    if result and result[0].get('affected_rows', 0) > 0:
-                        count_of_affected_rows += 1
-                    else:
-                        logger.info(f"БД не изменила строку с person_id \
-                                    {data.get('person_id')}")
-                except Exception as e:
-                    logger.error(f"Ошибка при обновлении person_id \
-                                 {data.get('person_id')}: {e}")
 
         if retry == 0:
             i += CHUNK_SIZE
-            logger.info(f"Обработано {min(i, total)} / {total} записей,"
+            logger.info(f"Обработано {min(i, total)} / {total} записей, "
                         "БД изменила {count_of_affected_rows} строк")
 
     db.close()
     logger.info("Обработка LLM завершена.")
+
+
+def process_person_md(db: DatabaseManager, person: dict[str, Any],
+                      update_query: str, exporter: MarkdownExporter,
+                      perp: PerplexityClient
+                    ) -> None:
+    """
+    Обрабатывает одного человека: поиск через Perplexity и экспорт в Markdown.
+    """
+    if not person.get("valid"):
+        return
+
+    ans, urls = perp.search_info(
+        first_name=person.get("meaningful_first_name", ""),
+        last_name=person.get("meaningful_last_name", ""),
+        additional_info=person.get("meaningful_about", ""),
+        personal_channel_name=person.get("personal_channel_username"),
+        personal_channel_about=person.get("personal_channel_about"),
+        temperature=0.1
+    )
+
+    safe_execute(db, update_query, (ans, urls, person.get('person_id')))
+
+    filepath = exporter.export_to_md(
+        first_name=person.get("meaningful_first_name", "Unknown"),
+        last_name=person.get("meaningful_last_name", "Unknown"),
+        content=ans,
+        urls=urls,
+        personal_channel=person.get('personal_channel_username', '')
+    )
+
+    if filepath:
+        logger.info(f"✅ Создан файл: {filepath}")
+    else:
+        logger.info("❌ Ошибка создания файла")
 
 
 def test_mdsearch() -> None:
@@ -139,53 +199,21 @@ def test_mdsearch() -> None:
     start_position: int = -1
     row_count: int = -1
     query: str = f"SELECT * FROM {config.result_table_name} \
-                    WHERE valid ORDER BY person_id"
+        WHERE valid ORDER BY person_id"
     if 0 < row_count:
         query += f" LIMIT {row_count}"
     if 0 < start_position <= row_count:
         query += f" OFFSET {start_position}"
 
     persons = db.execute_query(query)
-    update_query = f"""
-        UPDATE {config.result_table_name}
-        SET summary = %s,
-            urls = %s
-        WHERE person_id = %s
-    """.strip()
+    update_query = f"UPDATE {config.result_table_name} \
+        SET summary = %s, urls = %s WHERE person_id = %s"
 
     date_str: str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")
     exporter = MarkdownExporter(f"{date_str}_person_reports")
 
     for person in persons:
-        if not person.get("valid", False):
-            continue
-
-        ans, urls = perp.search_info(
-            first_name=person.get("meaningful_first_name", ""),
-            last_name=person.get("meaningful_last_name", ""),
-            additional_info=person.get("meaningful_about", ""),
-            personal_channel_name=person.get("personal_channel_username"),
-            personal_channel_about=person.get("personal_channel_about"),
-            temperature=0.1
-        )
-
-        try:
-            db.execute_query(update_query, (ans, urls, person.get('person_id')))
-        except Exception as e:
-            logger.error(f"Ошибка при обновлении p_id {person.get('person_id')}: {e}")
-
-        filepath = exporter.export_to_md(
-            first_name=person.get("meaningful_first_name", "Unknown"),
-            last_name=person.get("meaningful_last_name", "Unknown"),
-            content=ans,
-            urls=urls,
-            personal_channel=person.get('personal_channel_username', '')
-        )
-
-        if filepath:
-            logger.info(f"✅ Создан файл: {filepath}")
-        else:
-            logger.info("❌ Ошибка создания файла")
+        process_person_md(db, person, update_query, exporter, perp)
 
     db.close()
     logger.info("Экспорт в Markdown завершен.")
