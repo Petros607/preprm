@@ -31,3 +31,5 @@ class LlmConfig:
 source_table_name = "person_source_data"
 cleaned_table_name = "cleaned_person_source_data"
 result_table_name = "person_result_data"
+
+CHUNK_SIZE = 10

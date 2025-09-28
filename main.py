@@ -104,14 +104,12 @@ def process_llm_batch(db: DatabaseManager, chunk: dict[int, dict[str, str]],
     return count_of_affected_rows
 
 
-def test_llm() -> None:
+def test_llm(start_position: int, row_count: int) -> None:
     """
     Обрабатывает записи из result_table_name через LLM и обновляет базу данных.
     """
     logger.info("Начинаем обработку записей через LLM.")
     db = DatabaseManager()
-    start_position: int = 0
-    row_count: int = 100
     query: str = f"SELECT * FROM {config.result_table_name} ORDER BY person_id"
     if 0 < row_count:
         query += f" LIMIT {row_count}"
@@ -121,7 +119,7 @@ def test_llm() -> None:
     records = db.execute_query(query)
     total = len(records)
     llm = LlmClient()
-    CHUNK_SIZE: int = 10
+    CHUNK_SIZE: int = config.CHUNK_SIZE
     i = 0
     retry = 0
 
@@ -187,7 +185,7 @@ def process_person_md(db: DatabaseManager, person: dict[str, Any],
         logger.info("❌ Ошибка создания файла")
 
 
-def test_mdsearch() -> None:
+def test_mdsearch(start_position: int, row_count: int) -> None:
     """
     Выполняет поиск информации через PerplexityClient
     и экспортирует результаты в Markdown.
@@ -196,8 +194,6 @@ def test_mdsearch() -> None:
     perp = PerplexityClient()
     db = DatabaseManager()
 
-    start_position: int = -1
-    row_count: int = -1
     query: str = f"SELECT * FROM {config.result_table_name} \
         WHERE valid ORDER BY person_id"
     if 0 < row_count:
@@ -230,14 +226,16 @@ def main() -> None:
                         help="Обработка записей через LLM")
     parser.add_argument("--mdsearch", action="store_true",
                         help="Поиск информации и экспорт в Markdown")
+    parser.add_argument("--start", type=int, default=0, help="Начальная позиция записи")
+    parser.add_argument("--count", type=int, default=-1, help="Количество записей")
     args = parser.parse_args()
 
     if args.clean_db:
         clean_and_create_db()
     elif args.llm:
-        test_llm()
+        test_llm(start_position=args.start, row_count=args.count)
     elif args.mdsearch:
-        test_mdsearch()
+        test_mdsearch(start_position=args.start, row_count=args.count)
     else:
         parser.print_help()
 
