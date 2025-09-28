@@ -4,11 +4,11 @@ import logging
 from typing import Any
 
 import config
-from utils.db import DatabaseManager
 from llm.llm_client import LlmClient
-from logger import setup_logging
-from utils.md_exporter import MarkdownExporter
 from llm.perp_client import PerplexityClient
+from logger import setup_logging
+from utils.db import DatabaseManager
+from utils.md_exporter import MarkdownExporter
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -226,11 +226,11 @@ def main() -> None:
                         help="Обработка записей через LLM")
     parser.add_argument("--mdsearch", action="store_true",
                         help="Поиск информации и экспорт в Markdown")
-    parser.add_argument("--start", type=int, default=0, 
+    parser.add_argument("--start", type=int, default=0,
                         help="Начальная позиция записи")
-    parser.add_argument("--count", type=int, default=-1, 
+    parser.add_argument("--count", type=int, default=-1,
                         help="Количество записей")
-    parser.add_argument("--fast_test_llm", action="store_true", 
+    parser.add_argument("--fast_test_llm", action="store_true",
                         help="Быстрый тест llm")
     args = parser.parse_args()
 
