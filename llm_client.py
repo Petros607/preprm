@@ -20,8 +20,10 @@ class LlmClient:
         """
         try:
             completion = self.client.chat.completions.create(
-                # model="qwen/qwen3-14b:free",
-                model="qwen/qwen3-14b:free", #TODO
+                # model="qwen/qwen3-14b:free", #good
+                # model="mistralai/ministral-8b", #good
+                model="openai/gpt-oss-20b:free",
+                # model="z-ai/glm-4.5-air:free", #стоит внимания
                 messages=[{"role": "user", "content": prompt}],
                 response_format={"type": response_format},
                 n=1,
@@ -32,7 +34,7 @@ class LlmClient:
                 try:
                     return json.loads(content)
                 except json.JSONDecodeError:
-                    self.logger.warning(f"LLM вернула невалидный JSON: {content}")
+                    self.logger.error(f"LLM вернула невалидный JSON: {content}")
                     return {}
             return content
         except Exception as e:

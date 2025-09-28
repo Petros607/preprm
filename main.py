@@ -77,7 +77,7 @@ def test_llm():
                     logger.error(f"Ошибка при обновлении person_id {data['person_id']}: {e}")
         if not(retry):
             i+=CHUNK_SIZE
-        logger.info(f"Обработано {min(i, total)} / {total} записей, бд сообщила об изменении {count_of_affected_rows} строк")
+            logger.info(f"Обработано {min(i, total)} / {total} записей, бд сообщила об изменении {count_of_affected_rows} строк")
     db.close()
 
 def transform_record_to_chunk(data):
@@ -114,36 +114,36 @@ def test_mdsearch():
     exporter = MarkdownExporter(f"{date_str}_person_reports")
     
     for person in persons:
-        if person.get("valid", False):
-            ans, urls = perp.search_info(
-                first_name=person.get("meaningful_first_name", ""),
-                last_name=person.get("meaningful_last_name", ""),
-                additional_info=person.get("meaningful_about", ""),
-                # birth_date=person.get(""), #SOMEDAY
-                personal_channel_name=person.get("personal_channel_username"),
-                personal_channel_about=person.get("personal_channel_about"),
-                temperature=0.1
-            )
+        if person.get("valid", False): continue
+        ans, urls = perp.search_info(
+            first_name=person.get("meaningful_first_name", ""),
+            last_name=person.get("meaningful_last_name", ""),
+            additional_info=person.get("meaningful_about", ""),
+            # birth_date=person.get(""), #SOMEDAY
+            personal_channel_name=person.get("personal_channel_username"),
+            personal_channel_about=person.get("personal_channel_about"),
+            temperature=0.1
+        )
 
-            try: db.execute_query(update_query, (ans, urls, person.get('person_id')))
-            except Exception as e: logger.error(f"Ошибка при обновлении person_id {person.get('person_id')}: {e}")
-            
-            filepath = exporter.export_to_md(
-                first_name=person.get("meaningful_first_name", "Unknown"),
-                last_name=person.get("meaningful_last_name", "Unknown"),
-                content=ans,
-                urls=urls,
-                personal_channel=person.get('personal_channel_username', '')
-            )
-            
-            if filepath: print(f"✅ Создан файл: {filepath}")
-            else: print("❌ Ошибка создания файла")
+        try: db.execute_query(update_query, (ans, urls, person.get('person_id')))
+        except Exception as e: logger.error(f"Ошибка при обновлении person_id {person.get('person_id')}: {e}")
+        
+        filepath = exporter.export_to_md(
+            first_name=person.get("meaningful_first_name", "Unknown"),
+            last_name=person.get("meaningful_last_name", "Unknown"),
+            content=ans,
+            urls=urls,
+            personal_channel=person.get('personal_channel_username', '')
+        )
+        
+        if filepath: print(f"✅ Создан файл: {filepath}")
+        else: print("❌ Ошибка создания файла")
     db.close()
 
 def main():
     # clean_and_create_db()
-    # test_llm()
-    test_mdsearch()
+    test_llm()
+    # test_mdsearch()
 
 if __name__ == "__main__":
     main()
