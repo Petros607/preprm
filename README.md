@@ -10,12 +10,22 @@
 
 ---
 
-## Установка
+## Подготовка
 
 1. Клонируйте репозиторий:
 2. Установите зависимости (пример):
 ```bash
 pip install -r requirements.txt
+```
+3. Создайте .env файл:
+```
+DB_HOST=
+DB_NAME=
+DB_USER=
+DB_PASSWORD=
+DB_PORT=
+OPENROUTER_API_KEY=
+LLM_URL=
 ```
 ---
 
