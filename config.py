@@ -19,3 +19,7 @@ class LlmConfig:
     """Конфигурация подключения к llm"""
     key: Optional[str] = os.getenv('OPENROUTER_API_KEY')
     url: str = os.getenv('LLM_URL', 'https://openrouter.ai/api/v1')
+
+source_table_name = "person_source_data"
+cleaned_table_name = "cleaned_person_source_data"
+result_table_name = "person_result_data"
