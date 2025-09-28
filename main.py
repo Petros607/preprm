@@ -68,13 +68,13 @@ def test_llm():
                         bool(data.get('meaningful_first_name', '') 
                              and data.get('meaningful_last_name', '') 
                              and data.get('meaningful_about', '')),
-                        data['person_id']
+                        data.get('person_id')
                     )
                     result = db.execute_query(update_query, params)
                     if result and result[0].get('affected_rows', 0) > 0: count_of_affected_rows+=1
-                    else: logger.info(f"Бд не изменила строку с person_id {data['person_id']}")
+                    else: logger.info(f"Бд не изменила строку с person_id {data.get('person_id')}")
                 except Exception as e:
-                    logger.error(f"Ошибка при обновлении person_id {data['person_id']}: {e}")
+                    logger.error(f"Ошибка при обновлении person_id {data.get('person_id')}: {e}")
         if not(retry):
             i+=CHUNK_SIZE
             logger.info(f"Обработано {min(i, total)} / {total} записей, бд сообщила об изменении {count_of_affected_rows} строк")
@@ -114,7 +114,7 @@ def test_mdsearch():
     exporter = MarkdownExporter(f"{date_str}_person_reports")
     
     for person in persons:
-        if person.get("valid", False): continue
+        if not(person.get("valid", False)): continue
         ans, urls = perp.search_info(
             first_name=person.get("meaningful_first_name", ""),
             last_name=person.get("meaningful_last_name", ""),
@@ -142,8 +142,8 @@ def test_mdsearch():
 
 def main():
     # clean_and_create_db()
-    test_llm()
-    # test_mdsearch()
+    # test_llm()
+    test_mdsearch()
 
 if __name__ == "__main__":
     main()

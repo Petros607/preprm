@@ -1,20 +1,20 @@
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from typing import List, Dict, Optional
-import logging
 import csv
-import pandas as pd
+import logging
 from io import StringIO
+
+import pandas as pd
+import psycopg2
 from config import DatabaseConfig
+from psycopg2.extras import RealDictCursor
+
 
 class DatabaseManager:
-    def __init__(self, config: Optional[DatabaseConfig] = None):
+    def __init__(self, config: DatabaseConfig | None = None):
         self.config = config or DatabaseConfig()
         self.connection = None
-        self.is_connected = False
         self.logger = logging.getLogger(__name__)
         self.connect()
-    
+
     def connect(self) -> bool:
         """Установка соединения с БД"""
         try:
@@ -25,9 +25,8 @@ class DatabaseManager:
                 password=self.config.password,
                 port=self.config.port
             )
-            self.is_connected = True
-            self.logger.debug(
-                f"Успешное подключение к БД: {self.config.host}:{self.config.port}/{self.config.database}"
+            self.logger.debug(f"Успешное подключение к БД: \
+                              {self.config.host}:{self.config.port}/{self.config.database}"
             )
             return True
         except psycopg2.OperationalError as e:
@@ -38,18 +37,18 @@ class DatabaseManager:
             self.logger.error(f"Неожиданная ошибка при подключении: {e}")
             self.is_connected = False
             return False
-        
+
     def create_cleaned_table(self, source_table_name: str, new_table_name: str) -> bool:
         """Создание таблицы с очищенными данными"""
         if not self.connection:
             self.logger.error("Нет подключения к БД")
             return False
-        
+
         query = f"""
             DROP TABLE IF EXISTS {new_table_name};
             CREATE TABLE {new_table_name} AS
             SELECT DISTINCT ON ((data->>'telegram_id')::bigint) *
-            FROM {source_table_name} 
+            FROM {source_table_name}
             WHERE data ? 'about'
             ORDER BY (data->>'telegram_id')::bigint, fetch_date DESC;
         """.strip()
@@ -68,18 +67,20 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Неожиданная создания очищенной таблицы: {e}")
             return False
-    
-    def create_result_table(self, source_table_name: str, result_table_name: str, drop_table: bool = False) -> bool:
+
+    def create_result_table(self, source_table_name: str,
+                            result_table_name: str, drop_table: bool = False) -> bool:
         """Создание таблицы с результатами #TODO"""
         if not self.connection:
             self.logger.error("Нет подключения к БД")
             return False
         if drop_table:
-            pass #TODO добавить добавление DROP TABLE IF EXISTS {new_table_name};
+            # TODO добавить DROP TABLE IF EXISTS {new_table_name} по флагу;
+            pass
         query = f"""
         DROP TABLE IF EXISTS {result_table_name};
         CREATE TABLE {result_table_name} AS
-        SELECT 
+        SELECT
             person_id::bigint AS person_id,
             fetch_date::timestamp without time zone AS fetch_date,
             (data->>'telegram_id')::bigint AS telegram_id,
@@ -101,14 +102,15 @@ class DatabaseManager:
             data->'personal_channel'->>'username' AS personal_channel_username,
             data->'personal_channel'->>'about' AS personal_channel_about,
             (data->'personal_channel'->>'channel_id')::bigint AS personal_channel_id,
-            (data->'personal_channel'->>'participants_count')::integer AS personal_channel_participants_count,
+            (data->'personal_channel'->>'participants_count')::integer
+            AS personal_channel_participants_count,
             false AS valid,
             '' AS meaningful_first_name,
             '' AS meaningful_last_name,
             '' AS meaningful_about,
             '' AS summary,
             ARRAY[]::text[] AS urls
-        FROM {source_table_name} 
+        FROM {source_table_name}
         WHERE data ? 'about'
         """
         try:
@@ -124,15 +126,16 @@ class DatabaseManager:
                 self.connection.rollback()
             return False
         except Exception as e:
-            self.logger.error(f"Неожиданная ошибка при создании таблицы {result_table_name}: {e}")
+            self.logger.error(f"Неожиданная ошибка при создании \
+                              таблицы {result_table_name}: {e}")
             return False
-        
+
     def test_connection(self) -> bool:
         """Тестирование подключения к БД"""
-        if not self.is_connected or not self.connection:
+        if not self.connection:
             self.logger.warning("Нет активного подключения для тестирования")
             return False
-            
+
         try:
             cursor = self.connection.cursor()
             cursor.execute("SELECT version(), current_database(), current_user")
@@ -145,15 +148,15 @@ class DatabaseManager:
                     f"Версия: {db_info[0].split(',')[0]}"
                 )
             return True
-            
+
         except psycopg2.Error as e:
             self.logger.error(f"Ошибка тестирования подключения: {e}")
             return False
         except Exception as e:
             self.logger.error(f"Неожиданная ошибка при тестировании: {e}")
             return False
-    
-    def execute_query(self, query: str, params: Optional[tuple] = None) -> List[Dict]:
+
+    def execute_query(self, query: str, params: tuple | None = None) -> list:
         """Универсальный метод для выполнения произвольных SQL запросов"""
         if not self.connection:
             self.logger.warning("Попытка выполнить запрос без активного подключения")
@@ -178,23 +181,23 @@ class DatabaseManager:
         except Exception as e:
             self.logger.error(f"Неожиданная ошибка при выполнении запроса: {e}")
             return []
-    
-    def get_table_info(self, table_name: str) -> List[Dict]:
+
+    def get_table_info(self, table_name: str) -> list[dict]:
         """Получение информации о структуре таблицы"""
         query = """
         SELECT column_name, data_type, is_nullable, column_default
-        FROM information_schema.columns 
-        WHERE table_name = %s 
+        FROM information_schema.columns
+        WHERE table_name = %s
         ORDER BY ordinal_position
         """
         return self.execute_query(query, (table_name,))
-    
+
     def create_table_from_csv(self, csv_file_path: str, table_name: str,
                                    delimiter: str = ',', encoding: str = 'utf-8') -> bool:
         """
         Создает таблицу в БД из CSV файла
         """
-        if not self.is_connected:
+        if not self.connection:
             self.logger.error("Нет подключения к БД")
             return False
         try:
@@ -224,7 +227,9 @@ class DatabaseManager:
             self.logger.info(f"Таблица {table_name} создана")
             if not df.empty:
                 output = StringIO()
-                df.to_csv(output, sep='\t', header=False, index=False, quoting=csv.QUOTE_NONE, escapechar='\\')
+                df.to_csv(output, sep='\t', header=False, index=False,
+                          quoting=csv.QUOTE_NONE, escapechar='\\'
+                )
                 output.seek(0)
                 cursor.copy_from(output, table_name, null='', sep='\t')
                 self.logger.info(f"Данные скопированы в таблицу {table_name}")
@@ -238,7 +243,7 @@ class DatabaseManager:
             if self.connection:
                 self.connection.rollback()
             return False
-    
+
     def close(self) -> None:
         """Закрытие соединения с БД"""
         if self.connection:
