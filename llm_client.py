@@ -6,23 +6,35 @@ from config import LlmConfig
 
 
 class LlmClient(BaseLLMClient):
-    """
-    Конкретный клиент для "общих" LLM-вызовов.
-    Использует модель из config.default_model по умолчанию.
+    """Конкретный клиент для общих LLM-вызовов.
+    Наследуется от BaseLLMClient и использует модель по умолчанию
+    из конфигурации для обработки запросов к языковым моделям.
+    Attributes:
+        config (LlmConfig): Конфигурация LLM клиента
+        logger: Логгер для записи событий
     """
 
     def __init__(self, config: LlmConfig | None = None) -> None:
+        """Инициализация LLM клиента.
+        Args:
+            config: Конфигурация LLM. Если не указана, используется по умолчанию.
+        """
         super().__init__(config=config)
-        self.logger.debug("LlmClient initialized",
+        self.logger.debug("LlmClient инициализирован",
                           extra={"default_model": self.config.default_model})
 
-    def ask_llm(self, prompt: str,
-                response_format: str = "json_object", temperature: float = 0.0
-                ) -> Any:
-        """
-        Универсальный метод для обращения к LLM.
-        Возвращает dict (если response_format == "json_object") или str.
-        В случае ошибки возвращает {} или "".
+    def ask_llm(self, prompt: str, response_format: str = "json_object",
+                temperature: float = 0.0) -> Any:
+        """Универсальный метод для обращения к LLM.
+        Выполняет запрос к языковой модели с указанными параметрами
+        и возвращает результат в заданном формате.
+        Args:
+            prompt: Текст промпта для отправки в LLM
+            response_format: Формат ответа ("json_object" или "text")
+            temperature: Температура для генерации (0.0 - детерминированная)
+        Returns:
+            Any: Словарь если response_format == "json_object", иначе строка.
+                 В случае ошибки возвращает {} или "".
         """
         result, _raw = self._request_llm(
             prompt=prompt,
@@ -32,16 +44,20 @@ class LlmClient(BaseLLMClient):
         )
         return result
 
-    def parse_names_and_about_chunk(self, chunk: dict) -> dict:
-        """
-        Обрабатывает пачку записей (chunk) — вызывает LLM и ожидает json_object.
-        Возвращает dict ({} при ошибке или невалидном JSON).
+    def parse_names_and_about_chunk(self, chunk: dict[str, Any]) -> dict[str, Any]:
+        """Обрабатывает пачку записей для извлечения имен и информации.
+        Преобразует chunk данных в JSON, отправляет в LLM для анализа
+        и возвращает структурированные данные об именах и информации.
+        Args:
+            chunk: Словарь с данными для обработки
+        Returns:
+            Dict[str, Any]: Словарь с обработанными данными или пустой словарь при ошибке
         """
         try:
             chunk_json = json.dumps(chunk, ensure_ascii=False)
         except Exception as exc:
-            self.logger.error("Chunk is not serializable to JSON; "
-                            "returning empty result.", exc_info=exc
+            self.logger.error("Chunk не может быть сериализован в JSON; "
+                            "возвращаем пустой результат.", exc_info=exc
                             )
             return {}
 
@@ -81,11 +97,11 @@ class LlmClient(BaseLLMClient):
 ## ДАННЫЕ ДЛЯ ОБРАБОТКИ (количество: {len(chunk)}):
 {chunk_json}
 """
-        self.logger.debug("Calling ask_llm for parse_names_and_about_chunk",
+        self.logger.debug("Вызов ask_llm для parse_names_and_about_chunk",
                           extra={"chunk_size": len(chunk)}
                           )
         response = self.ask_llm(prompt, response_format="json_object")
         if not isinstance(response, dict):
-            self.logger.warning("Expected dict but got different type; returning {}.")
+            self.logger.warning("Ожидался словарь, но получен другой тип; возвращаем {}.")
             return {}
         return response

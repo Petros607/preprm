@@ -7,40 +7,52 @@ from openai import OpenAI
 
 
 class BaseLLMClient:
-    """
-    Базовый класс-обёртка для вызовов LLM через OpenAI/OpenRouter.
-    Отвечает за:
-      - инициализацию клиента
-      - выполнение запроса
-      - общую обработку ошибок и логирование
-      - безопасный разбор JSON-ответов
-    Не поднимает исключения наружу — возвращает безопасные пустые значения.
+    """Базовый класс-обёртка для вызовов LLM через OpenAI/OpenRouter.
+    Отвечает за инициализацию клиента, выполнение запросов, обработку ошибок
+    и безопасный разбор JSON-ответов. Не поднимает исключения наружу —
+    возвращает безопасные пустые значения.
+    Attributes:
+        config (LlmConfig): Конфигурация LLM клиента
+        client: Клиент OpenAI
+        logger: Логгер для записи событий
     """
 
     def __init__(self, config: LlmConfig | None = None) -> None:
+        """Инициализация базового LLM клиента.
+        Args:
+            config: Конфигурация LLM. Если не указана, используется по умолчанию.
+        """
         self.config: LlmConfig = config or LlmConfig()
         self.client = OpenAI(base_url=self.config.url, api_key=self.config.key)
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        self.logger.debug("Initialized BaseLLMClient", extra={"config": self.config})
+        self.logger.debug("Базовый LLM клиент инициализирован",
+                          extra={"config": self.config}
+                          )
 
     def _safe_parse_json(self, raw: str | None) -> dict[str, Any]:
-        """Пытается распарсить JSON; в случае ошибки — логирует и возвращает {}."""
+        """Безопасно парсит JSON строку.
+        Пытается распарсить JSON; в случае ошибки — логирует и возвращает пустой словарь.
+        Args:
+            raw: Сырая JSON строка для парсинга
+        Returns:
+            Dict[str, Any]: Распарсенный JSON как словарь или пустой словарь при ошибке
+        """
         if not raw:
-            self.logger.debug("Empty raw content for JSON parsing.")
+            self.logger.debug("Пустое содержимое для парсинга JSON")
             return {}
         try:
             parsed = json.loads(raw)
-            self.logger.debug("JSON parsed successfully.",
+            self.logger.debug("JSON успешно распарсен",
                               extra={"parsed_type": type(parsed).__name__}
                               )
             return parsed if isinstance(parsed, dict) else {"result": parsed}
         except json.JSONDecodeError as exc:
-            self.logger.warning("Invalid JSON from LLM.",
+            self.logger.warning("Невалидный JSON от LLM",
                                 exc_info=exc, extra={"raw": raw}
                                 )
             return {}
         except Exception as exc:
-            self.logger.error("Unexpected error while parsing JSON.",
+            self.logger.error("Неожиданная ошибка при парсинге JSON",
                               exc_info=exc, extra={"raw": raw}
                               )
             return {}
@@ -55,15 +67,23 @@ class BaseLLMClient:
         max_tokens: int | None = None,
         extra_body: dict[str, Any] | None = None,
     ) -> tuple[Any, Any | None]:
-        """
-        Универсальный метод выполнения запроса к LLM.
+        """Универсальный метод выполнения запроса к LLM.
         Возвращает кортеж (parsed_content_or_raw, raw_completion_object_or_None).
-
-        - Если response_format == "json_object" — возвращается Dict (или {} при ошибке).
-        - Иначе — возвращается str (или "" при ошибке).
+        - Если response_format == "json_object" — возвращается Dict (или {} при ошибке)
+        - Иначе — возвращается str (или "" при ошибке)
+        Args:
+            prompt: Текст промпта для отправки в LLM
+            model: Название модели для использования
+            response_format: Формат ответа ("text" или "json_object")
+            temperature: Температура для генерации (0.0 - детерминированная)
+            n: Количество вариантов ответа
+            max_tokens: Максимальное количество токенов в ответе
+            extra_body: Дополнительные параметры для запроса
+        Returns:
+            Tuple[Any, Optional[Any]]: Кортеж (результат, объект completion или None)
         """
         self.logger.debug(
-            "Preparing LLM request",
+            "Подготовка запроса к LLM",
             extra={
                 "model": model,
                 "response_format": response_format,
@@ -81,7 +101,7 @@ class BaseLLMClient:
 
             rf = {"type": response_format} if response_format == "json_object" else None
 
-            self.logger.debug("Calling OpenAI.chat.completions.create",
+            self.logger.debug("Вызов OpenAI.chat.completions.create",
                     extra={"body_preview": {k: body.get(k) for k in list(body)[:5]}}
                     )
             completion = self.client.chat.completions.create(
@@ -97,25 +117,25 @@ class BaseLLMClient:
             raw_text: str | None = None
             if content is not None:
                 raw_text = getattr(content, "content", None)
-            self.logger.debug("Received LLM raw response",
+            self.logger.debug("Получен сырой ответ от LLM",
                 extra={"raw_text_preview": (raw_text[:500] if raw_text else None)}
                 )
 
             if response_format == "json_object":
                 parsed = self._safe_parse_json(raw_text)
-                self.logger.info("LLM returned JSON object",
+                self.logger.info("LLM вернул JSON объект",
                                  extra={"parsed_keys": list(parsed.keys())}
                                  )
                 return parsed, completion
 
             text_result = raw_text or ""
-            self.logger.info("LLM returned text response",
+            self.logger.info("LLM вернул текстовый ответ",
                              extra={"length": len(text_result)}
                              )
             return text_result, completion
 
         except Exception as exc:
-            self.logger.debug("Exception details for LLM request", exc_info=exc)
+            self.logger.debug("Детали исключения при запросе к LLM", exc_info=exc)
             self.logger.error("Ошибка при вызове LLM. Возвращаем безопасное значение.",
                               exc_info=False
                               )

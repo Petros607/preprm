@@ -142,8 +142,8 @@ def test_mdsearch():
 
 def main():
     # clean_and_create_db()
-    # test_llm()
-    test_mdsearch()
+    test_llm()
+    # test_mdsearch()
 
 if __name__ == "__main__":
     main()
