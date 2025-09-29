@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Анализ людей</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: white;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        th {
+            padding: 15px;
+            text-align: left;
+            font-weight: 600;
+        }
+        .th-left {
+            background-color: #2196F3;
+            color: white;
+        }
+        .th-right {
+            background-color: #4CAF50;
+            color: white;
+        }
+        td {
+            padding: 15px;
+            border-bottom: 1px solid #ddd;
+            vertical-align: top;
+        }
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+        .index-column {
+            width: 50px;
+            text-align: center;
+            font-weight: bold;
+            color: #666;
+            background-color: #f8f9fa;
+            border-right: 1px solid #e9ecef;
+        }
+        .left-column {
+            width: 30%;
+            border-right: 2px solid #e9ecef;
+            background-color: #f8f9fa;
+        }
+        .right-column {
+            width: 65%;
+        }
+        .person-name {
+            font-weight: bold;
+            color: #2c3e50;
+            font-size: 1.1em;
+            margin-bottom: 5px;
+        }
+        .about-text {
+            color: #666;
+            font-style: italic;
+            margin-top: 8px;
+        }
+        .summary-text {
+            color: #333;
+            line-height: 1.5;
+            text-align: justify;
+        }
+        .urls-list {
+            margin-top: 10px;
+        }
+        .url-item {
+            margin-bottom: 5px;
+        }
+        .url-link {
+            color: #007bff;
+            text-decoration: none;
+            word-break: break-all;
+        }
+        .url-link:hover {
+            text-decoration: underline;
+        }
+        .no-urls {
+            color: #999;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Анализ людей</h1>
+        <table>
+            <thead>
+                <tr>
+                    <th class="index-column">№</th>
+                    <th class="th-left">Основная информация</th>
+                    <th class="th-right">Анализ и ссылки</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- PEOPLE_DATA -->
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

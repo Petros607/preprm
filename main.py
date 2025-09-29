@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import logging
+from pathlib import Path
 from typing import Any
 
 import config
@@ -28,7 +29,8 @@ def clean_and_create_db() -> None:
     )
     db.create_result_table(
         source_table_name=config.cleaned_table_name,
-        result_table_name=config.result_table_name
+        result_table_name=config.result_table_name,
+        drop_table=True
     )
     db.close()
     logger.info("База данных успешно подготовлена.")
@@ -93,7 +95,8 @@ def process_llm_batch(db: DatabaseManager, chunk: dict[int, dict[str, str]],
             data.get('meaningful_about', ''),
             bool(data.get('meaningful_first_name')
                  and data.get('meaningful_last_name')
-                 and data.get('meaningful_about')),
+                 and data.get('meaningful_about')
+            ),
             data.get('person_id')
         )
         if safe_execute(db, update_query, params):
@@ -111,10 +114,8 @@ def test_llm(start_position: int, row_count: int) -> None:
     logger.info("Начинаем обработку записей через LLM.")
     db = DatabaseManager()
     query: str = f"SELECT * FROM {config.result_table_name} ORDER BY person_id"
-    if 0 < row_count:
-        query += f" LIMIT {row_count}"
-    if 0 < start_position <= row_count:
-        query += f" OFFSET {start_position}"
+    if 0 < row_count: query += f" LIMIT {row_count}"
+    if 0 < start_position: query += f" OFFSET {start_position}"
 
     records = db.execute_query(query)
     total = len(records)
@@ -132,28 +133,27 @@ def test_llm(start_position: int, row_count: int) -> None:
         chunk = transform_record_to_chunk(record_chunk)
         count_of_affected_rows = process_llm_batch(db, chunk, update_query, llm)
 
-        if count_of_affected_rows == 0:
+        if count_of_affected_rows < CHUNK_SIZE:
             logger.warning(f"Батч с {i} по {i + CHUNK_SIZE} не обработался ИИ! "
-                           "Попытка №{retry}")
+                           f"Попытка №{retry}"
+            )
             retry += 1
-            if retry > 3:
-                retry = 0
-        else:
-            retry = 0
+            if retry > 3: retry = 0
+        else: retry = 0
 
         if retry == 0:
             i += CHUNK_SIZE
             logger.info(f"Обработано {min(i, total)} / {total} записей, "
-                        "БД изменила {count_of_affected_rows} строк")
-
+                        f"БД изменила {count_of_affected_rows} строк"
+            )
     db.close()
     logger.info("Обработка LLM завершена.")
 
 
 def process_person_md(db: DatabaseManager, person: dict[str, Any],
                       update_query: str, exporter: MarkdownExporter,
-                      perp: PerplexityClient
-                    ) -> None:
+                      md_flag: bool, perp: PerplexityClient
+    ) -> int | None:
     """
     Обрабатывает одного человека: поиск через Perplexity и экспорт в Markdown.
     """
@@ -171,18 +171,21 @@ def process_person_md(db: DatabaseManager, person: dict[str, Any],
 
     safe_execute(db, update_query, (ans, urls, person.get('person_id')))
 
-    filepath = exporter.export_to_md(
-        first_name=person.get("meaningful_first_name", "Unknown"),
-        last_name=person.get("meaningful_last_name", "Unknown"),
-        content=ans,
-        urls=urls,
-        personal_channel=person.get('personal_channel_username', '')
-    )
+    if md_flag:
+        filepath = exporter.export_to_md(
+            first_name=person.get("meaningful_first_name", "Unknown"),
+            last_name=person.get("meaningful_last_name", "Unknown"),
+            content=ans,
+            urls=urls,
+            personal_channel=person.get('personal_channel_username', '')
+        )
 
-    if filepath:
-        logger.info(f"✅ Создан файл: {filepath}")
-    else:
-        logger.info("❌ Ошибка создания файла")
+        if filepath:
+            logger.info(f"✅ Создан файл: {filepath}")
+        else:
+            logger.info("❌ Ошибка создания файла")
+
+    return person.get('person_id')
 
 
 def test_mdsearch(start_position: int, row_count: int) -> None:
@@ -196,10 +199,8 @@ def test_mdsearch(start_position: int, row_count: int) -> None:
 
     query: str = f"SELECT * FROM {config.result_table_name} \
         WHERE valid ORDER BY person_id"
-    if 0 < row_count:
-        query += f" LIMIT {row_count}"
-    if 0 < start_position <= row_count:
-        query += f" OFFSET {start_position}"
+    if 0 < row_count: query += f" LIMIT {row_count}"
+    if 0 < start_position: query += f" OFFSET {start_position}"
 
     persons = db.execute_query(query)
     update_query = f"UPDATE {config.result_table_name} \
@@ -208,11 +209,77 @@ def test_mdsearch(start_position: int, row_count: int) -> None:
     date_str: str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")
     exporter = MarkdownExporter(f"data/{date_str}_person_reports")
 
+    count_of_affected_rows = 0
+    total = len(persons)
     for person in persons:
-        process_person_md(db, person, update_query, exporter, perp)
+        id = process_person_md(db, person, update_query,
+                               exporter, False, perp
+        )
+        count_of_affected_rows += 1
+        if not (count_of_affected_rows % 5) or count_of_affected_rows == total:
+            logger.info(f"Обработано {count_of_affected_rows} / {total} записей, "
+                        f"БД изменила id - {id}"
+            )
 
     db.close()
     logger.info("Экспорт в Markdown завершен.")
+
+
+def export_to_html() -> None:
+    logger.info("Начинаем экспорт людей в html таблицу.")
+    db = DatabaseManager()
+    query: str = f"SELECT * FROM {config.result_table_name} \
+        WHERE valid ORDER BY person_id"
+    persons = db.execute_query(query)
+
+    try:
+        with open('templates/template.html', encoding='utf-8'):
+            html_template = Path('templates/template.html').read_text(encoding='utf-8')
+    except FileNotFoundError:
+        logger.error("Файл template.html не найден!")
+        return
+
+    people_html = ""
+
+    for index, person in enumerate(persons):
+        first_name = person.get('meaningful_first_name', '') or ''
+        last_name = person.get('meaningful_last_name', '') or ''
+        about = person.get('meaningful_about', '') or ''
+        summary = person.get('summary', '') or ''
+        urls = person.get('urls', []) or []
+        full_name = f"{first_name} {last_name}".strip()
+
+        urls_html = ""
+        if urls:
+            urls_html = '<div class="urls-list"><strong>Ссылки:</strong>'
+            for url in urls:
+                urls_html += f'<div class="url-item">• <a href="{url}" \
+                class="url-link" target="_blank">{url}</a></div>'
+            urls_html += '</div>'
+        else:
+            urls_html = '<div class="no-urls">Ссылки не найдены</div>'
+
+        people_html += f"""
+                <tr>
+                    <td class="index-column">{index}</td>
+                    <td class="left-column">
+                        <div class="person-name">{full_name}</div>
+                        <div class="about-text">{about}</div>
+                    </td>
+                    <td class="right-column">
+                        <div class="summary-text">{summary}</div>
+                        {urls_html}
+                    </td>
+                </tr>
+        """
+
+    final_html = html_template.replace('<!-- PEOPLE_DATA -->', people_html)
+
+    filename = "people_analysis.html"
+    with open(filename, 'w', encoding='utf-8'):
+        Path(filename).write_text(final_html, encoding='utf-8')
+
+    logger.info(f"HTML таблица сохранена в файл: {filename}")
 
 
 def main() -> None:
@@ -221,17 +288,23 @@ def main() -> None:
     """
     parser = argparse.ArgumentParser(description="Инструменты работы с БД и LLM")
     parser.add_argument("--clean-db", action="store_true",
-                        help="Очистка и подготовка базы данных")
+                        help="Очистка и подготовка базы данных"
+    )
     parser.add_argument("--llm", action="store_true",
-                        help="Обработка записей через LLM")
+                        help="Обработка записей через LLM"
+    )
     parser.add_argument("--mdsearch", action="store_true",
-                        help="Поиск информации и экспорт в Markdown")
+                        help="Поиск информации и экспорт в Markdown"
+    )
     parser.add_argument("--start", type=int, default=0,
-                        help="Начальная позиция записи")
+                        help="Начальная позиция записи"
+    )
     parser.add_argument("--count", type=int, default=-1,
-                        help="Количество записей")
-    parser.add_argument("--fast_test_llm", action="store_true",
-                        help="Быстрый тест llm")
+                        help="Количество записей"
+    )
+    parser.add_argument("--to_html", action="store_true",
+                        help="Экспорт в html таблицу"
+    )
     args = parser.parse_args()
 
     if args.clean_db:
@@ -240,9 +313,8 @@ def main() -> None:
         test_llm(start_position=args.start, row_count=args.count)
     elif args.mdsearch:
         test_mdsearch(start_position=args.start, row_count=args.count)
-    elif args.fast_test_llm:
-        test_llm(start_position=0, row_count=20)
-        test_mdsearch(start_position=-1, row_count=-1)
+    elif args.to_html:
+        export_to_html()
     else:
         parser.print_help()
 

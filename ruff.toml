@@ -45,6 +45,7 @@ ignore = [
     "BLE001",
     "S608", # SQL injection vector through string-based query construction
     "DTZ005", # `datetime.datetime.now()` called without a `tz` argument
+    "E701", # Multiple statements on one line
 ]
 # Исключение директорий и файлов из линтинга
 exclude = [
