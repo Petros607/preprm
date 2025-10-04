@@ -1,0 +1,26 @@
+<!-- person_row.html -->
+<tr>
+    <td class="index-column">{index}</td>
+    <td class="left-column">
+        <div class="person-name">{full_name}</div>
+        <div class="person-details">
+            <div class="detail-item">
+                <span class="detail-label">Username:</span> 
+                <span class="detail-value">{username}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">Канал:</span> 
+                <span class="detail-value">{channel_display}</span>
+            </div>
+            <div class="detail-item">
+                <span class="detail-label">О канале:</span> 
+                <span class="detail-value">{channel_about_display}</span>
+            </div>
+        </div>
+        <div class="about-text">{about}</div>
+    </td>
+    <td class="right-column">
+        <div class="summary-text">{summary}</div>
+        {urls_html}
+    </td>
+</tr>

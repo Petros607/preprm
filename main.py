@@ -172,7 +172,18 @@ def process_person_md(db: DatabaseManager, person: dict[str, Any],
     safe_execute(db, update_query, (ans, urls, person.get('person_id')))
 
     if md_flag:
-        filepath = exporter.export_to_md(
+        export_to_md(person, exporter, ans, urls)
+
+    return person.get('person_id')
+
+
+def export_to_md(person: dict[str, Any], exporter: MarkdownExporter,
+                 ans, urls
+    ) -> str | None:
+    """
+    Экспорт в Markdown.
+    """
+    filepath = exporter.export_to_md(
             first_name=person.get("meaningful_first_name", "Unknown"),
             last_name=person.get("meaningful_last_name", "Unknown"),
             content=ans,
@@ -180,12 +191,12 @@ def process_person_md(db: DatabaseManager, person: dict[str, Any],
             personal_channel=person.get('personal_channel_username', '')
         )
 
-        if filepath:
-            logger.info(f"✅ Создан файл: {filepath}")
-        else:
-            logger.info("❌ Ошибка создания файла")
-
-    return person.get('person_id')
+    if filepath:
+        logger.info(f"✅ Создан файл: {filepath}")
+        return filepath
+    else:
+        logger.error("❌ Ошибка создания файла")
+        return
 
 
 def test_mdsearch(start_position: int, row_count: int) -> None:
@@ -233,10 +244,10 @@ def export_to_html() -> None:
     persons = db.execute_query(query)
 
     try:
-        with open('templates/template.html', encoding='utf-8'):
-            html_template = Path('templates/template.html').read_text(encoding='utf-8')
-    except FileNotFoundError:
-        logger.error("Файл template.html не найден!")
+        html_template = Path('templates/template.html').read_text(encoding='utf-8')
+        person_template = Path('templates/person_row.html').read_text(encoding='utf-8')
+    except FileNotFoundError as e:
+        logger.error(f"Файл шаблона не найден: {e}")
         return
 
     people_html = ""
@@ -245,9 +256,24 @@ def export_to_html() -> None:
         first_name = person.get('meaningful_first_name', '') or ''
         last_name = person.get('meaningful_last_name', '') or ''
         about = person.get('meaningful_about', '') or ''
+        username = person.get('username', '') or ''
+        personal_channel_username = person.get('personal_channel_username', '') or ''
+        personal_channel_about = person.get('personal_channel_about', '') or ''
         summary = person.get('summary', '') or ''
+        person_id = person.get('person_id', '')
         urls = person.get('urls', []) or []
-        full_name = f"{first_name} {last_name}".strip()
+
+        full_name = f"{first_name} {last_name} ({person_id})".strip()
+
+        if not personal_channel_username:
+            channel_display = '<span class="empty-field">Отсутствует</span>'
+        else:
+            channel_display = f'@{personal_channel_username}'
+
+        if not personal_channel_about:
+            channel_about_display = '<span class="empty-field">Описание не указано</span>'
+        else:
+            channel_about_display = personal_channel_about
 
         urls_html = ""
         if urls:
@@ -259,27 +285,25 @@ def export_to_html() -> None:
         else:
             urls_html = '<div class="no-urls">Ссылки не найдены</div>'
 
-        people_html += f"""
-                <tr>
-                    <td class="index-column">{index}</td>
-                    <td class="left-column">
-                        <div class="person-name">{full_name}</div>
-                        <div class="about-text">{about}</div>
-                    </td>
-                    <td class="right-column">
-                        <div class="summary-text">{summary}</div>
-                        {urls_html}
-                    </td>
-                </tr>
-        """
+        person_html = person_template.format(
+            index=index,
+            full_name=full_name,
+            username=username,
+            channel_display=channel_display,
+            channel_about_display=channel_about_display,
+            about=about,
+            summary=summary,
+            urls_html=urls_html
+        )
+
+        people_html += person_html
 
     final_html = html_template.replace('<!-- PEOPLE_DATA -->', people_html)
 
-    filename = "people_analysis.html"
-    with open(filename, 'w', encoding='utf-8'):
-        Path(filename).write_text(final_html, encoding='utf-8')
+    result_filename = "people_analysis.html"
+    Path(result_filename).write_text(final_html, encoding='utf-8')
 
-    logger.info(f"HTML таблица сохранена в файл: {filename}")
+    logger.info(f"HTML таблица сохранена в файл: {result_filename}")
 
 
 def main() -> None:

@@ -84,7 +84,7 @@ class PerplexityClient(BaseLLMClient):
                                    model=self.config.perplexity_model,
                                    response_format=response_format,
                                    temperature=temperature
-                                   )
+                )
 
     def search_info(
         self,
@@ -165,8 +165,7 @@ class PerplexityClient(BaseLLMClient):
                                  if len(prompt) > 200 else prompt}
                           )
         return self.ask_perplexity(prompt=prompt, response_format=response_format,
-                                   temperature=temperature
-                                   )
+                                   temperature=temperature)
 
     def extract_urls_from_response(self, completion_response: Any | None) -> list[str]:
         """Извлекает URL-ы из сырого ответа completion.
