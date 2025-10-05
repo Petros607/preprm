@@ -10,6 +10,7 @@ from llm.perp_client import PerplexityClient
 from logger import setup_logging
 from utils.db import DatabaseManager
 from utils.md_exporter import MarkdownExporter
+from utils import cleaner
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,6 +35,48 @@ def clean_and_create_db() -> None:
     )
     db.close()
     logger.info("База данных успешно подготовлена.")
+
+
+def pre_llm() -> None:
+    """
+    Подготовка данных перед проходом нейросетью.
+    Выполняет очистку полей имени, фамилии и описания перед LLM-постобработкой.
+    """
+    db = DatabaseManager()
+    persons = db.execute_query(f"""
+        SELECT person_id, first_name, 
+        last_name, about,
+        personal_channel_title,
+        personal_channel_about
+        FROM {config.result_table_name}
+        ORDER BY person_id"""
+    )
+
+    update_query = f"UPDATE {config.result_table_name} \
+        SET meaningful_first_name = %s, meaningful_last_name = %s, \
+            meaningful_about = %s WHERE person_id = %s"
+    
+    for p in persons:
+        pid, fn, ln, about, title, ch_about = (
+            cleaner.normalize_empty(v) for v in p.values()
+        ) #TODO: в теории в таблице '' -> None
+
+        fn = cleaner.clean_name_field(fn)
+        ln = cleaner.clean_second_name_field(ln)
+
+        if cleaner.should_move_lastname_to_about(ln):
+            about = f"{ln}. {about or ''}".strip()
+            # ln = None
+
+        if fn and ' ' in fn and not ln:
+            parts = fn.split(' ')
+            if len(parts) == 2:
+                fn, ln = parts
+
+        about_clean = cleaner.merge_about_fields(about, title, ch_about)
+
+        params = (fn, ln, about_clean, pid)
+        safe_execute(db, update_query, params)
 
 
 def transform_record_to_chunk(data: list[dict[str, Any]]) -> dict[int, dict[str, str]]:
@@ -131,6 +174,7 @@ def test_llm(start_position: int, row_count: int) -> None:
     while i < total:
         record_chunk = records[i:i + CHUNK_SIZE]
         chunk = transform_record_to_chunk(record_chunk)
+        # TODO: process_llm_batch должен быть в main
         count_of_affected_rows = process_llm_batch(db, chunk, update_query, llm)
 
         if count_of_affected_rows < CHUNK_SIZE:
@@ -240,7 +284,7 @@ def export_to_html() -> None:
     logger.info("Начинаем экспорт людей в html таблицу.")
     db = DatabaseManager()
     query: str = f"SELECT * FROM {config.result_table_name} \
-        WHERE valid ORDER BY person_id"
+        ORDER BY person_id" #TODO WHERE valid
     persons = db.execute_query(query)
 
     try:
@@ -257,7 +301,7 @@ def export_to_html() -> None:
         last_name = person.get('meaningful_last_name', '') or ''
         about = person.get('meaningful_about', '') or ''
         username = person.get('username', '') or ''
-        personal_channel_username = person.get('personal_channel_username', '') or ''
+        personal_channel_title = person.get('personal_channel_title', '') or ''
         personal_channel_about = person.get('personal_channel_about', '') or ''
         summary = person.get('summary', '') or ''
         person_id = person.get('person_id', '')
@@ -265,10 +309,10 @@ def export_to_html() -> None:
 
         full_name = f"{first_name} {last_name} ({person_id})".strip()
 
-        if not personal_channel_username:
+        if not personal_channel_title:
             channel_display = '<span class="empty-field">Отсутствует</span>'
         else:
-            channel_display = f'@{personal_channel_username}'
+            channel_display = f'@{personal_channel_title}'
 
         if not personal_channel_about:
             channel_about_display = '<span class="empty-field">Описание не указано</span>'
@@ -314,6 +358,9 @@ def main() -> None:
     parser.add_argument("--clean-db", action="store_true",
                         help="Очистка и подготовка базы данных"
     )
+    parser.add_argument("--pre-llm", action="store_true",
+                        help="Обработка записей через LLM"
+    )
     parser.add_argument("--llm", action="store_true",
                         help="Обработка записей через LLM"
     )
@@ -326,13 +373,15 @@ def main() -> None:
     parser.add_argument("--count", type=int, default=-1,
                         help="Количество записей"
     )
-    parser.add_argument("--to_html", action="store_true",
+    parser.add_argument("--to-html", action="store_true",
                         help="Экспорт в html таблицу"
     )
     args = parser.parse_args()
 
     if args.clean_db:
         clean_and_create_db()
+    elif args.pre_llm:
+        pre_llm()
     elif args.llm:
         test_llm(start_position=args.start, row_count=args.count)
     elif args.mdsearch:
@@ -345,3 +394,57 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+    # test_people = [ 248771, 37466, 356, 103417, 8194, 277813,
+    #     388979, 661498, 709831, 813448, 909576,
+    #     920829, 994174, 1013823, 1079476, 1158382,
+    #     1358422, 1552742, 1583153, 1720854, 3155060,
+    #     3218325, 3411808, 4441716, 4821153, 6698755,
+    #     7513641, 9135651, 21631623, 24010914, 24123168,
+    #     29165285, 34701553, 36656758, 41892439, 46817693,
+    #     53219571, 55851550, 57844602, 62917248, 67198418,
+    #     68944204, 74704118, 74913061, 79429662, 86171236,
+    #     86644680, 97186718, 100247439, 111374964, 114206709,
+    #     124537360, 135135566, 137647982, 140979261, 421981966]
+    # TRUNCATE TABLE testperson_result_data;
+    # INSERT INTO testperson_result_data (
+    #     person_id,
+    #     first_name,
+    #     last_name,
+    #     about,
+    #     username,
+    #     personal_channel_title,
+    #     personal_channel_about,
+    #     valid,
+    #     meaningful_first_name,
+    #     meaningful_last_name,
+    #     meaningful_about,
+    #     summary,
+    #     urls )
+    # SELECT
+    #     person_id,
+    #     first_name,
+    #     last_name,
+    #     about,
+    #     username,
+    #     personal_channel_title,
+    #     personal_channel_about,
+    #     valid,
+    #     meaningful_first_name,
+    #     meaningful_last_name,
+    #     meaningful_about,
+    #     summary,
+    #     urls
+    # FROM person_result_data
+    # WHERE person_id IN (
+    #     248771, 37466, 356, 103417, 8194, 277813,
+    #     388979, 661498, 709831, 813448, 909576,
+    #     920829, 994174, 1013823, 1079476, 1158382,
+    #     1358422, 1552742, 1583153, 1720854, 3155060,
+    #     3218325, 3411808, 4441716, 4821153, 6698755,
+    #     7513641, 9135651, 21631623, 24010914, 24123168,
+    #     29165285, 34701553, 36656758, 41892439, 46817693,
+    #     53219571, 55851550, 57844602, 62917248, 67198418,
+    #     68944204, 74704118, 74913061, 79429662, 86171236,
+    #     86644680, 97186718, 100247439, 111374964, 114206709,
+    #     124537360, 135135566, 137647982, 140979261, 421981966);

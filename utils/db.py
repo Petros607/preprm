@@ -29,9 +29,9 @@ class DatabaseManager:
         self.connection = None
         self.logger = logging.getLogger(__name__)
         self._is_connected = False
-        self.connect()
+        self._connect()
 
-    def connect(self) -> bool:
+    def _connect(self) -> bool:
         """Установка соединения с базой данных.
         Returns:
             bool: True если подключение успешно, иначе False.
