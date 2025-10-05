@@ -52,9 +52,12 @@ def pre_llm() -> None:
         ORDER BY person_id"""
     )
 
+    # update_query = f"UPDATE {config.result_table_name} \
+    #     SET meaningful_first_name = %s, meaningful_last_name = %s, \
+    #         meaningful_about = %s WHERE person_id = %s"
     update_query = f"UPDATE {config.result_table_name} \
-        SET meaningful_first_name = %s, meaningful_last_name = %s, \
-            meaningful_about = %s WHERE person_id = %s"
+        SET first_name = %s, last_name = %s, \
+            about = %s WHERE person_id = %s"
     
     for p in persons:
         pid, fn, ln, about, title, ch_about = (
@@ -124,28 +127,45 @@ def process_llm_batch(db: DatabaseManager, chunk: dict[int, dict[str, str]],
     :param llm: объект LlmClient
     :return: количество успешно обновлённых строк
     """
-    parsed_chunk = llm.parse_names_and_about_chunk(chunk)
     count_of_affected_rows = 0
+    try:
+        parsed_chunk = llm.parse_names_and_about_chunk(chunk)
 
-    if not parsed_chunk:
-        logger.warning("Батч не обработался ИИ!")
-        return 0
+        if not parsed_chunk:
+            logger.warning("Батч не обработался ИИ!")
+            return count_of_affected_rows
 
-    for data in parsed_chunk.values():
-        params = (
-            data.get('meaningful_first_name', ''),
-            data.get('meaningful_last_name', ''),
-            data.get('meaningful_about', ''),
-            bool(data.get('meaningful_first_name')
-                 and data.get('meaningful_last_name')
-                 and data.get('meaningful_about')
-            ),
-            data.get('person_id')
-        )
-        if safe_execute(db, update_query, params):
-            count_of_affected_rows += 1
-        else:
-            logger.info(f"БД не изменила строку с person_id {data.get('person_id')}")
+        if not isinstance(parsed_chunk, dict):
+            logger.warning(f"Некорректный тип parsed_chunk: {type(parsed_chunk)} \
+                            , ожидается dict")
+            return count_of_affected_rows
+        
+        for key, data in parsed_chunk.items():
+            try:
+                if not isinstance(data, dict):
+                    logger.info(f"Пропуск элемента с ключом '{key}': ожидается dict, получен {type(data)}")
+                    continue
+                
+                params = (
+                    data.get('meaningful_first_name', ''),
+                    data.get('meaningful_last_name', ''),
+                    data.get('meaningful_about', ''),
+                    bool(data.get('meaningful_first_name')
+                        and data.get('meaningful_last_name')
+                        and data.get('meaningful_about')
+                    ),
+                    data.get('person_id')
+                )
+                if safe_execute(db, update_query, params):
+                    count_of_affected_rows += 1
+                else:
+                    logger.info(f"БД не изменила строку с person_id {data.get('person_id')}")
+            except Exception as e:
+                logger.error(f"Ошибка обработки элемента с ключом '{key}': {e}")
+                continue
+    
+    except Exception as e:
+        logger.error(f"Критическая ошибка при обработке parsed_chunk: {e}")
 
     return count_of_affected_rows
 
@@ -172,13 +192,14 @@ def test_llm(start_position: int, row_count: int) -> None:
             meaningful_about = %s, valid = %s WHERE person_id = %s"
 
     while i < total:
-        record_chunk = records[i:i + CHUNK_SIZE]
+        right = i + CHUNK_SIZE if i + CHUNK_SIZE < total else total
+        record_chunk = records[i:right]
         chunk = transform_record_to_chunk(record_chunk)
         # TODO: process_llm_batch должен быть в main
         count_of_affected_rows = process_llm_batch(db, chunk, update_query, llm)
 
         if count_of_affected_rows < CHUNK_SIZE:
-            logger.warning(f"Батч с {i} по {i + CHUNK_SIZE} не обработался ИИ! "
+            logger.warning(f"Батч с {i} по {right} не обработался ИИ! "
                            f"Попытка №{retry}"
             )
             retry += 1
