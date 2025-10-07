@@ -153,6 +153,7 @@ class DatabaseManager:
             (data->'personal_channel'->>'participants_count')::integer
             AS personal_channel_participants_count,
             false AS valid,
+            '' AS confidence,
             '' AS meaningful_first_name,
             '' AS meaningful_last_name,
             '' AS meaningful_about,

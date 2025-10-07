@@ -143,7 +143,9 @@ def process_llm_batch(db: DatabaseManager, chunk: dict[int, dict[str, str]],
         for key, data in parsed_chunk.items():
             try:
                 if not isinstance(data, dict):
-                    logger.info(f"Пропуск элемента с ключом '{key}': ожидается dict, получен {type(data)}")
+                    logger.info(f"Пропуск элемента с ключом '{key}': \
+                                ожидается dict, получен {type(data)}"
+                    )
                     continue
                 
                 params = (
@@ -192,13 +194,13 @@ def test_llm(start_position: int, row_count: int) -> None:
             meaningful_about = %s, valid = %s WHERE person_id = %s"
 
     while i < total:
-        right = i + CHUNK_SIZE if i + CHUNK_SIZE < total else total
+        right = min(i + CHUNK_SIZE, total)
         record_chunk = records[i:right]
         chunk = transform_record_to_chunk(record_chunk)
         # TODO: process_llm_batch должен быть в main
         count_of_affected_rows = process_llm_batch(db, chunk, update_query, llm)
 
-        if count_of_affected_rows < CHUNK_SIZE:
+        if count_of_affected_rows != right - i:
             logger.warning(f"Батч с {i} по {right} не обработался ИИ! "
                            f"Попытка №{retry}"
             )
@@ -225,19 +227,28 @@ def process_person_md(db: DatabaseManager, person: dict[str, Any],
     if not person.get("valid"):
         return
 
-    ans, urls = perp.search_info(
+    search = perp.search_info(
         first_name=person.get("meaningful_first_name", ""),
         last_name=person.get("meaningful_last_name", ""),
-        additional_info=person.get("meaningful_about", ""),
-        personal_channel_name=person.get("personal_channel_username"),
-        personal_channel_about=person.get("personal_channel_about"),
-        temperature=0.1
+        about=person.get("meaningful_about", ""),
+        # personal_channel_name=person.get("personal_channel_username"),
+        # personal_channel_about=person.get("personal_channel_about")
     )
 
-    safe_execute(db, update_query, (ans, urls, person.get('person_id')))
+    # return ans, urls #TODO
+    
+    safe_execute(db, update_query, 
+        (
+            # '' if search.get("confidence") == "low" else search.get("summary"),
+            search.get("summary"),
+            search.get("urls"),
+            search.get("confidence"),
+            person.get('person_id')
+        )
+    )
 
     if md_flag:
-        export_to_md(person, exporter, ans, urls)
+        export_to_md(person, exporter, search.get("summary"), search.get("urls"))
 
     return person.get('person_id')
 
@@ -280,7 +291,7 @@ def test_mdsearch(start_position: int, row_count: int) -> None:
 
     persons = db.execute_query(query)
     update_query = f"UPDATE {config.result_table_name} \
-        SET summary = %s, urls = %s WHERE person_id = %s"
+        SET summary = %s, urls = %s, confidence = %s WHERE person_id = %s"
 
     date_str: str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")
     exporter = MarkdownExporter(f"data/{date_str}_person_reports")
@@ -298,7 +309,7 @@ def test_mdsearch(start_position: int, row_count: int) -> None:
             )
 
     db.close()
-    logger.info("Экспорт в Markdown завершен.")
+    logger.info("Поиск информации завершен.")
 
 
 def export_to_html() -> None:
@@ -318,17 +329,18 @@ def export_to_html() -> None:
     people_html = ""
 
     for index, person in enumerate(persons):
+        person_id = person.get('person_id', '')
         first_name = person.get('meaningful_first_name', '') or ''
         last_name = person.get('meaningful_last_name', '') or ''
         about = person.get('meaningful_about', '') or ''
         username = person.get('username', '') or ''
+        confidence = person.get('confidence', '') or ''
         personal_channel_title = person.get('personal_channel_title', '') or ''
         personal_channel_about = person.get('personal_channel_about', '') or ''
         summary = person.get('summary', '') or ''
-        person_id = person.get('person_id', '')
         urls = person.get('urls', []) or []
 
-        full_name = f"{first_name} {last_name} ({person_id})".strip()
+        full_name = f"{first_name} {last_name} ({person_id}) - уверенность: {confidence}".strip()
 
         if not personal_channel_title:
             channel_display = '<span class="empty-field">Отсутствует</span>'
@@ -415,57 +427,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-    # test_people = [ 248771, 37466, 356, 103417, 8194, 277813,
-    #     388979, 661498, 709831, 813448, 909576,
-    #     920829, 994174, 1013823, 1079476, 1158382,
-    #     1358422, 1552742, 1583153, 1720854, 3155060,
-    #     3218325, 3411808, 4441716, 4821153, 6698755,
-    #     7513641, 9135651, 21631623, 24010914, 24123168,
-    #     29165285, 34701553, 36656758, 41892439, 46817693,
-    #     53219571, 55851550, 57844602, 62917248, 67198418,
-    #     68944204, 74704118, 74913061, 79429662, 86171236,
-    #     86644680, 97186718, 100247439, 111374964, 114206709,
-    #     124537360, 135135566, 137647982, 140979261, 421981966]
-    # TRUNCATE TABLE testperson_result_data;
-    # INSERT INTO testperson_result_data (
-    #     person_id,
-    #     first_name,
-    #     last_name,
-    #     about,
-    #     username,
-    #     personal_channel_title,
-    #     personal_channel_about,
-    #     valid,
-    #     meaningful_first_name,
-    #     meaningful_last_name,
-    #     meaningful_about,
-    #     summary,
-    #     urls )
-    # SELECT
-    #     person_id,
-    #     first_name,
-    #     last_name,
-    #     about,
-    #     username,
-    #     personal_channel_title,
-    #     personal_channel_about,
-    #     valid,
-    #     meaningful_first_name,
-    #     meaningful_last_name,
-    #     meaningful_about,
-    #     summary,
-    #     urls
-    # FROM person_result_data
-    # WHERE person_id IN (
-    #     248771, 37466, 356, 103417, 8194, 277813,
-    #     388979, 661498, 709831, 813448, 909576,
-    #     920829, 994174, 1013823, 1079476, 1158382,
-    #     1358422, 1552742, 1583153, 1720854, 3155060,
-    #     3218325, 3411808, 4441716, 4821153, 6698755,
-    #     7513641, 9135651, 21631623, 24010914, 24123168,
-    #     29165285, 34701553, 36656758, 41892439, 46817693,
-    #     53219571, 55851550, 57844602, 62917248, 67198418,
-    #     68944204, 74704118, 74913061, 79429662, 86171236,
-    #     86644680, 97186718, 100247439, 111374964, 114206709,
-    #     124537360, 135135566, 137647982, 140979261, 421981966);
