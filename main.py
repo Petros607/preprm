@@ -4,6 +4,14 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin
+import face_recognition
+import numpy as np
+from io import BytesIO
+from PIL import Image
+
 import config
 from llm.llm_client import LlmClient
 from llm.perp_client import PerplexityClient
@@ -54,7 +62,7 @@ def pre_llm() -> None:
 
     # update_query = f"UPDATE {config.result_table_name} \
     #     SET meaningful_first_name = %s, meaningful_last_name = %s, \
-    #         meaningful_about = %s WHERE person_id = %s"
+    #         meaningful_about = %s WHERE person_id = %s" #TODO
     update_query = f"UPDATE {config.result_table_name} \
         SET first_name = %s, last_name = %s, \
             about = %s WHERE person_id = %s"
@@ -219,7 +227,7 @@ def test_llm(start_position: int, row_count: int) -> None:
 
 def process_person_md(db: DatabaseManager, person: dict[str, Any],
                       update_query: str, exporter: MarkdownExporter,
-                      md_flag: bool, perp: PerplexityClient
+                      md_flag: bool, perp: PerplexityClient, check_llm: LlmClient
     ) -> int | None:
     """
     Обрабатывает одного человека: поиск через Perplexity и экспорт в Markdown.
@@ -235,12 +243,11 @@ def process_person_md(db: DatabaseManager, person: dict[str, Any],
         # personal_channel_about=person.get("personal_channel_about")
     )
 
-    # return ans, urls #TODO
+    check = check_llm.postcheck(search.get("summary"))
     
     safe_execute(db, update_query, 
         (
-            # '' if search.get("confidence") == "low" else search.get("summary"),
-            search.get("summary"),
+            search.get("summary") if check else None,
             search.get("urls"),
             search.get("confidence"),
             person.get('person_id')
@@ -282,6 +289,7 @@ def test_mdsearch(start_position: int, row_count: int) -> None:
     """
     logger.info("Начинаем поиск информации через PerplexityClient.")
     perp = PerplexityClient()
+    check_llm = LlmClient()
     db = DatabaseManager()
 
     query: str = f"SELECT * FROM {config.result_table_name} \
@@ -300,7 +308,7 @@ def test_mdsearch(start_position: int, row_count: int) -> None:
     total = len(persons)
     for person in persons:
         id = process_person_md(db, person, update_query,
-                               exporter, False, perp
+                               exporter, False, perp, check_llm
         )
         count_of_affected_rows += 1
         if not (count_of_affected_rows % 5) or count_of_affected_rows == total:
@@ -310,6 +318,107 @@ def test_mdsearch(start_position: int, row_count: int) -> None:
 
     db.close()
     logger.info("Поиск информации завершен.")
+
+
+def extract_image_urls(page_url: str):
+    try:
+        response = requests.get(page_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        response.raise_for_status()
+    except requests.RequestException:
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    image_urls = set()
+
+    for img in soup.find_all("img"):
+        src = img.get("src") or img.get("data-src") or ""
+        if not src:
+            continue
+
+        full_url = urljoin(page_url, src)
+
+        if any(full_url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
+            image_urls.add(full_url)
+
+    return list(image_urls)
+
+def is_human_face(image_url: str) -> bool:
+    try:
+        response = requests.get(image_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        response.raise_for_status()
+        img = np.array(Image.open(BytesIO(response.content)).convert("RGB"))
+    except Exception:
+        return False
+
+    face_locations = face_recognition.face_locations(img, model="hog")  # можно "cnn" если GPU
+    return len(face_locations) > 0
+
+def cluster_faces(image_urls, threshold=0.6):
+    embeddings = []
+    valid_urls = []
+
+    for url in image_urls:
+        emb = get_face_embedding(url)
+        if emb is not None:
+            embeddings.append(emb)
+            valid_urls.append(url)
+
+    clusters = []
+    
+    for i, emb in enumerate(embeddings):
+        assigned = False
+        for cluster in clusters:
+            ref_emb = cluster[0][1]
+            dist = np.linalg.norm(emb - ref_emb)
+            if dist < threshold:
+                cluster.append((valid_urls[i], emb))
+                assigned = True
+                break
+        if not assigned:
+            clusters.append([(valid_urls[i], emb)])
+
+    return [[url for url, _ in cluster] for cluster in clusters]
+
+def get_face_embedding(url: str):
+    try:
+        response = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        img = face_recognition.load_image_file(BytesIO(response.content))
+        encodings = face_recognition.face_encodings(img)
+        return encodings[0] if encodings else None
+    except:
+        return None
+
+def add_photos() -> None:
+    logger.info("Начинаем поиск фотографий.")
+    db = DatabaseManager()
+    query: str = f"SELECT * FROM {config.result_table_name} \
+        WHERE valid AND summary IS NOT NULL  \
+        AND TRIM(summary) != '' \
+        ORDER BY person_id"
+    persons = db.execute_query(query)
+    update_query = f"UPDATE {config.result_table_name} \
+        SET photos = %s WHERE person_id = %s"
+    for person in persons:
+        logger.info(f"Обработка {person.get("person_id")}")
+        all_images = []
+        urls = person.get("urls")
+        for url in urls:
+            imgs = extract_image_urls(url)
+            if imgs:
+                all_images.extend(imgs)
+        human_images = []
+        for img_url in all_images:
+            if is_human_face(img_url):
+                human_images.append(img_url)
+        clusters = cluster_faces(human_images)
+        if clusters:
+            main_cluster = max(clusters, key=len)
+            if len(main_cluster) > 2:
+                params = (
+                    main_cluster,
+                    person.get('person_id')
+                )
+                safe_execute(db, update_query, params)
 
 
 def export_to_html() -> None:
@@ -334,13 +443,13 @@ def export_to_html() -> None:
         last_name = person.get('meaningful_last_name', '') or ''
         about = person.get('meaningful_about', '') or ''
         username = person.get('username', '') or ''
-        confidence = person.get('confidence', '') or ''
         personal_channel_title = person.get('personal_channel_title', '') or ''
         personal_channel_about = person.get('personal_channel_about', '') or ''
         summary = person.get('summary', '') or ''
         urls = person.get('urls', []) or []
+        photos = person.get('photos', []) or []
 
-        full_name = f"{first_name} {last_name} ({person_id}) - уверенность: {confidence}".strip()
+        full_name = f"{first_name} {last_name} ({person_id})".strip()
 
         if not personal_channel_title:
             channel_display = '<span class="empty-field">Отсутствует</span>'
@@ -362,6 +471,16 @@ def export_to_html() -> None:
         else:
             urls_html = '<div class="no-urls">Ссылки не найдены</div>'
 
+        photos_html = ""
+        if photos:
+            photos_html = '<div class="photos-list"><strong>Фото:</strong>'
+            for photo in photos:
+                photos_html += f'<div class="photo-item">• <a href="{photo}" \
+                class="photo-link" target="_blank">{photo}</a></div>'
+            photos_html += '</div>'
+        else:
+            photos_html = '<div class="no-photos">Фото не найдены</div>'
+
         person_html = person_template.format(
             index=index,
             full_name=full_name,
@@ -370,7 +489,8 @@ def export_to_html() -> None:
             channel_about_display=channel_about_display,
             about=about,
             summary=summary,
-            urls_html=urls_html
+            urls_html=urls_html,
+            photos = photos_html
         )
 
         people_html += person_html
@@ -400,6 +520,9 @@ def main() -> None:
     parser.add_argument("--mdsearch", action="store_true",
                         help="Поиск информации и экспорт в Markdown"
     )
+    parser.add_argument("--photos", action="store_true",
+                        help="Поиск фотографий из ссылок"
+    )
     parser.add_argument("--start", type=int, default=0,
                         help="Начальная позиция записи"
     )
@@ -419,6 +542,8 @@ def main() -> None:
         test_llm(start_position=args.start, row_count=args.count)
     elif args.mdsearch:
         test_mdsearch(start_position=args.start, row_count=args.count)
+    elif args.photos:
+        add_photos()
     elif args.to_html:
         export_to_html()
     else:

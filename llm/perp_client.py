@@ -196,15 +196,18 @@ class PerplexityClient(BaseLLMClient):
 
     def _estimate_confidence(self, summary: str | None, sources: int) -> str:
         """Простейшая эвристика уверенности."""
-        if not summary or "недостаточно информации" in summary.lower() or not(sources):
-            return "low"
-
-        markers = [
-            "по всей видимости", "вероятно", 
-            "предположительно", "поиск по запросу",
+        markers_l = [
+            "поиск по запросу",
             "найти не удалось", "данных не найдено"
         ]
-        return "medium" if any(m in summary.lower() for m in markers) else "high"
+        if not summary or not(sources) or any(m in summary.lower() for m in markers_l):
+            return "low"
+
+        markers_m = [
+            "по всей видимости", "вероятно", 
+            "предположительно"
+        ]
+        return "medium" if any(m in summary.lower() for m in markers_m) else "high"
 
 
     def _extract_urls_from_response(self, completion_response: Any | None) -> list[str]:

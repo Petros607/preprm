@@ -23,8 +23,10 @@ class LlmClient(BaseLLMClient):
         self.logger.debug("LlmClient инициализирован",
                           extra={"default_model": self.config.default_model})
 
-    def ask_llm(self, prompt: str, response_format: str = "json_object",
-                temperature: float = 0.0) -> Any:
+    def ask_llm(self, prompt: str, 
+                response_format: str = "json_object",
+                temperature: float = 0.0
+        ) -> Any:
         """Универсальный метод для обращения к LLM.
         Выполняет запрос к языковой модели с указанными параметрами
         и возвращает результат в заданном формате.
@@ -120,3 +122,49 @@ class LlmClient(BaseLLMClient):
             self.logger.warning("Ожидался словарь, но получен другой тип; возвращаем {}.")
             return {}
         return response
+
+    # def postcheck(self, chunk: dict[str, str]) -> dict[str, bool]:
+    def postcheck(self, text) -> bool:
+        """
+        Проверяет, является ли текст содержательным описанием человека или заглушкой.
+        Возвращает словарь с результатом классификации.
+        """
+        prompt = f"""
+    Ты — AI-ассистент для анализа текстовых ответов. Твоя задача — классифицировать ответ на один из двух типов.
+
+    **Инструкция:**
+    - **True:** Ответ содержит реальную, проверенную информацию о конкретном человеке (должность, компания, достижения, цифры, факты).
+    - **False:** Ответ является заглушкой и сообщает, что информации о человеке не найдено.
+
+    **Примеры:**
+
+    Пример 1 (True):
+    Текст: "Александр Клишев является генеральным директором digital-агентства Think Mobile, которое специализируется ..."
+    Классификация: True
+
+    Пример 2 (False):
+    Текст: "Недостаточно информации для составления аналитической справки о человеке ..."
+    Классификация: False
+
+    ---
+    Теперь проанализируй следующий текст:
+
+    Текст: {text}
+
+    ---
+    ФОРМАТ ОТВЕТА (строго JSON):
+    {{
+        "is_valid": True/False
+    }}
+    """
+        response, _raw = self._request_llm(
+            prompt=prompt,
+            model=self.config.check_model,
+            response_format="json_object"
+        )
+        
+        if not isinstance(response, dict) or "is_valid" not in response:
+            self.logger.warning("Некорректный формат ответа от нейросети; возвращаем False по умолчанию.")
+            return {"is_valid": False}
+        
+        return response.get("is_valid")

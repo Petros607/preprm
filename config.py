@@ -26,6 +26,7 @@ class LlmConfig:
     url: str = os.getenv("LLM_URL", "https://openrouter.ai/api/v1")
     # "qwen/qwen3-14b" "mistralai/ministral-8b" "z-ai/glm-4.5-air" "x-ai/grok-4-fast"
     default_model: str = os.getenv("LLM_DEFAULT_MODEL", "x-ai/grok-4-fast")
+    check_model: str = os.getenv("LLM_CHECK_MODEL", "mistralai/ministral-8b")
     perplexity_model: str = os.getenv("LLM_PERPLEXITY_MODEL", "perplexity/sonar")
 
 
@@ -33,7 +34,7 @@ source_table_name = "person_source_data"
 cleaned_table_name = "cleaned_person_source_data"
 result_table_name = "testperson_result_data"
 
-CHUNK_SIZE = 5
+CHUNK_SIZE = 10
 
 EMOJI_PATTERN = re.compile("["
     "\U0001F600-\U0001F64F"  # эмотиконы
@@ -45,3 +46,5 @@ EMOJI_PATTERN = re.compile("["
 "]+", flags=re.UNICODE)
 URL_PATTERN = re.compile(r'https?://\S+|t\.me/\S+|@[\w_]+')
 ENRU_CHARS_PATTERN = re.compile(r'[^A-Za-zА-Яа-яЁё\s-]+')
+
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
