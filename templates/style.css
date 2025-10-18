@@ -1,0 +1,177 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f5f5f5;
+    padding: 20px;
+    min-width: 800px;
+}
+
+.container {
+    max-width: 100%;
+    margin: 0 auto;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    padding: 20px;
+}
+
+h1 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: #2c3e50;
+}
+
+.people-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.people-table th {
+    background-color: #34495e;
+    color: white;
+    padding: 12px;
+    text-align: left;
+    font-weight: 600;
+    border: 1px solid #ddd;
+}
+
+.people-table td {
+    padding: 12px;
+    border: 1px solid #ddd;
+    vertical-align: top;
+}
+
+.person-row:nth-child(even) {
+    background-color: #f8f9fa;
+}
+
+.person-row:hover {
+    background-color: #e8f4fd;
+}
+
+/* Стили для колонки с информацией */
+.person-info {
+    font-size: 14px;
+}
+
+.name-section,
+.username-section,
+.about-section,
+.channel-section,
+.meaningful-about {
+    margin-bottom: 8px;
+}
+
+.separator {
+    text-align: center;
+    color: #7f8c8d;
+    margin: 8px 0;
+    font-weight: bold;
+}
+
+.meaningful-about {
+    background-color: #fff3cd;
+    padding: 8px;
+    border-radius: 4px;
+    border-left: 4px solid #ffc107;
+}
+
+/* Стили для колонки с резюме */
+.summary-section {
+    font-size: 13px;
+}
+
+.summary-content {
+    margin-bottom: 12px;
+    padding: 8px;
+    background-color: #e8f5e8;
+    border-radius: 4px;
+    border-left: 4px solid #28a745;
+}
+
+.urls-list {
+    list-style: none;
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 8px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+}
+
+.urls-list li {
+    margin-bottom: 4px;
+    padding: 4px;
+    word-break: break-all;
+}
+
+.urls-list a {
+    color: #007bff;
+    text-decoration: none;
+}
+
+.urls-list a:hover {
+    text-decoration: underline;
+}
+
+/* Стили для колонки с фотографиями */
+.photos-section {
+    text-align: center;
+}
+
+.photos-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+    gap: 8px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding: 5px;
+}
+
+.photo-item {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 4px;
+    background: white;
+}
+
+.photo-item img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 3px;
+}
+
+.photo-placeholder {
+    width: 100px;
+    height: 100px;
+    background-color: #e9ecef;
+    border: 1px dashed #6c757d;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6c757d;
+    font-size: 12px;
+}
+
+/* Адаптивность */
+@media (max-width: 1200px) {
+    .container {
+        padding: 10px;
+    }
+    
+    .people-table {
+        font-size: 12px;
+    }
+    
+    .photos-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}

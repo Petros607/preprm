@@ -123,13 +123,13 @@ class BaseLLMClient:
 
             if response_format == "json_object":
                 parsed = self._safe_parse_json(raw_text)
-                self.logger.info("LLM вернул JSON объект",
+                self.logger.debug("LLM вернул JSON объект",
                                  extra={"parsed_keys": list(parsed.keys())}
                                  )
                 return parsed, completion
 
             text_result = raw_text or ""
-            self.logger.info("LLM вернул текстовый ответ",
+            self.logger.debug("LLM вернул текстовый ответ",
                              extra={"length": len(text_result)}
                              )
             return text_result, completion

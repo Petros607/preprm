@@ -29,9 +29,9 @@ class DatabaseManager:
         self.connection = None
         self.logger = logging.getLogger(__name__)
         self._is_connected = False
-        self.connect()
+        self._connect()
 
-    def connect(self) -> bool:
+    def _connect(self) -> bool:
         """Установка соединения с базой данных.
         Returns:
             bool: True если подключение успешно, иначе False.
@@ -153,13 +153,20 @@ class DatabaseManager:
             (data->'personal_channel'->>'participants_count')::integer
             AS personal_channel_participants_count,
             false AS valid,
+            '' AS confidence,
             '' AS meaningful_first_name,
             '' AS meaningful_last_name,
             '' AS meaningful_about,
             '' AS summary,
-            ARRAY[]::text[] AS urls
+            ARRAY[]::text[] AS urls,
+            ARRAY[]::text[] AS photos
         FROM {source_table_name}
         WHERE data ? 'about'
+        AND {source_table_name}.person_id IN (
+            SELECT telegram_id 
+            FROM public.channel_subscribers 
+            WHERE channel_id = -1002240495824
+        )
         """
 
         return self._execute_with_transaction(

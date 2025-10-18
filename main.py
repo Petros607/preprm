@@ -2,191 +2,246 @@ import argparse
 import datetime
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List
 
 import config
 from llm.llm_client import LlmClient
 from llm.perp_client import PerplexityClient
 from logger import setup_logging
+from jinja2 import Environment, FileSystemLoader
 from utils.db import DatabaseManager
 from utils.md_exporter import MarkdownExporter
+from utils import cleaner
+from utils.photo_processor import PhotoProcessor
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+SELECT_PERSONS_BASE_QUERY = f"SELECT * FROM {config.result_table_name}"
+
+UPDATE_MEANINGFUL_FIELDS_QUERY = f"""
+    UPDATE {config.result_table_name}
+    SET meaningful_first_name = %s, 
+        meaningful_last_name = %s,
+        meaningful_about = %s
+    WHERE person_id = %s
+"""
+
+UPDATE_LLM_RESULTS_QUERY = f"""
+    UPDATE {config.result_table_name}
+    SET meaningful_first_name = %s, 
+        meaningful_last_name = %s,
+        meaningful_about = %s, 
+        valid = %s
+    WHERE person_id = %s
+"""
+
+UPDATE_SUMMARY_QUERY = f"""
+    UPDATE {config.result_table_name}
+    SET summary = %s, 
+        urls = %s, 
+        confidence = %s
+    WHERE person_id = %s
+"""
+
+UPDATE_PHOTOS_QUERY = f"""
+    UPDATE {config.result_table_name}
+    SET photos = %s
+    WHERE person_id = %s
+"""
+
 
 def clean_and_create_db() -> None:
-    """
-    Очистка исходной базы данных и создание новых таблиц:
-    - cleaned_table_name
-    - result_table_name
+    """Очищает исходную базу данных и создает новые рабочие таблицы.
+
+    Удаляет и пересоздает таблицы `cleaned_table_name` и `result_table_name`
+    на основе конфигурации.
     """
     logger.info("Начинаем очистку базы данных и создание новых таблиц.")
     db = DatabaseManager()
-    db.create_cleaned_table(
-        source_table_name=config.source_table_name,
-        new_table_name=config.cleaned_table_name
-    )
-    db.create_result_table(
-        source_table_name=config.cleaned_table_name,
-        result_table_name=config.result_table_name,
-        drop_table=True
-    )
-    db.close()
+    try:
+        db.create_cleaned_table(
+            source_table_name=config.source_table_name,
+            new_table_name=config.cleaned_table_name
+        )
+        db.create_result_table(
+            source_table_name=config.cleaned_table_name,
+            result_table_name=config.result_table_name,
+            drop_table=True
+        )
+    finally:
+        db.close()
     logger.info("База данных успешно подготовлена.")
 
 
-def transform_record_to_chunk(data: list[dict[str, Any]]) -> dict[int, dict[str, str]]:
-    """
-    Преобразует список записей из базы данных в словарь для пакетной обработки LLM.
-    :param data: список записей из базы
-    :return: словарь {индекс: запись} с ключами person_id, first_name, last_name, about
-    """
-    result: dict[int, dict[str, str]] = {}
-    for index, row in enumerate(data):
-        result[index] = {
-            "person_id": row.get('person_id'),
-            "first_name": row.get('first_name') or "",
-            "last_name": row.get('last_name') or "",
-            "about": row.get('about') or ""
-        }
-    return result
+def pre_llm() -> None:
+    """Выполняет предварительную очистку данных перед обработкой LLM.
 
-
-def safe_execute(db: DatabaseManager, query: str, params: tuple[Any, ...]) -> bool:
+    Извлекает необработанные данные, применяет к ним функции очистки
+    (удаление мусора, нормализация) и обновляет "meaningful" поля в базе данных.
     """
-    Выполняет SQL-запрос и логирует ошибки.
-    :param db: объект DatabaseManager
-    :param query: SQL-запрос
-    :param params: параметры для запроса
-    :return: True, если была изменена хотя бы одна строка
-    """
+    db = DatabaseManager()
     try:
-        result = db.execute_query(query, params)
-        affected = result[0].get('affected_rows', 0) if result else 0
-        return affected > 0
-    except Exception as e:
-        logger.error(f"Ошибка при выполнении запроса: {e}")
-        return False
+        select_query = f"""
+            SELECT person_id, first_name, last_name, about, 
+                   personal_channel_title, personal_channel_about
+            FROM {config.result_table_name} ORDER BY person_id
+        """
+        persons = db.execute_query(select_query)
+    
+        for person in persons:
+            person_id = cleaner.normalize_empty(person.get('person_id'))
+            first_name = cleaner.clean_name_field(cleaner.normalize_empty(person.get('first_name')))
+            last_name = cleaner.clean_second_name_field(cleaner.normalize_empty(person.get('last_name')))
+            about = cleaner.normalize_empty(person.get('about'))
+            channel_title = cleaner.normalize_empty(person.get('personal_channel_title'))
+            channel_about = cleaner.normalize_empty(person.get('personal_channel_about'))
+            
+            if first_name and ' ' in first_name and not last_name:
+                parts = first_name.split(' ', 1)
+                if len(parts) == 2:
+                    first_name, last_name = parts
+
+            about_clean = cleaner.merge_about_fields(about, channel_title, channel_about)
+            params = (first_name, last_name, about_clean, person_id)
+            db.execute_query(UPDATE_MEANINGFUL_FIELDS_QUERY, params)
+    finally:
+        db.close()
+    logger.info("Предварительная обработка завершена.")
 
 
-def process_llm_batch(db: DatabaseManager, chunk: dict[int, dict[str, str]],
-                      update_query: str, llm: LlmClient
-                      ) -> int:
+def export_batch_to_db(db: DatabaseManager, parsed_chunk: Dict[str, Dict[str, Any]]) -> int:
+    """Сохраняет результаты обработки одного батча от LLM в базу данных.
+
+    Args:
+        db: Экземпляр DatabaseManager для выполнения запросов.
+        parsed_chunk: Словарь с результатами от LLM, где ключ - индекс,
+                      а значение - словарь с данными о человеке.
+
+    Returns:
+        Количество успешно обновленных строк в базе данных.
     """
-    Обрабатывает один батч записей через LLM и обновляет базу.
-    :param db: объект DatabaseManager
-    :param chunk: батч записей
-    :param update_query: SQL для обновления
-    :param llm: объект LlmClient
-    :return: количество успешно обновлённых строк
-    """
-    parsed_chunk = llm.parse_names_and_about_chunk(chunk)
-    count_of_affected_rows = 0
-
-    if not parsed_chunk:
-        logger.warning("Батч не обработался ИИ!")
-        return 0
-
+    updated_rows_count = 0
     for data in parsed_chunk.values():
-        params = (
-            data.get('meaningful_first_name', ''),
-            data.get('meaningful_last_name', ''),
-            data.get('meaningful_about', ''),
-            bool(data.get('meaningful_first_name')
-                 and data.get('meaningful_last_name')
-                 and data.get('meaningful_about')
-            ),
-            data.get('person_id')
-        )
-        if safe_execute(db, update_query, params):
-            count_of_affected_rows += 1
-        else:
-            logger.info(f"БД не изменила строку с person_id {data.get('person_id')}")
+        if not isinstance(data, dict):
+            logger.warning(f"Пропуск элемента: ожидался dict, получен {type(data)}")
+            continue
 
-    return count_of_affected_rows
+        person_id = data.get('person_id')
+        if not person_id:
+            logger.warning("Пропуск элемента: отсутствует 'person_id'.")
+            continue
+
+        first_name = data.get('meaningful_first_name')
+        last_name = data.get('meaningful_last_name')
+        about = data.get('meaningful_about')
+        
+        is_valid = bool(first_name and last_name and about)
+        params = (first_name, last_name, about, is_valid, person_id)
+
+        try:
+            result = db.execute_query(UPDATE_LLM_RESULTS_QUERY, params)
+            affected_rows = result[0].get('affected_rows', 0) if result else 0
+            if affected_rows > 0:
+                updated_rows_count += 1
+            else:
+                logger.warning(f"Строка для person_id {person_id} не была обновлена в БД.")
+        except Exception as e:
+            logger.error(f"Ошибка обновления БД для person_id {person_id}: {e}")
+
+    return updated_rows_count
 
 
 def test_llm(start_position: int, row_count: int) -> None:
-    """
-    Обрабатывает записи из result_table_name через LLM и обновляет базу данных.
+    """Обрабатывает записи партиями (батчами) через LLM для очистки данных.
+
+    Функция выбирает записи из `result_table_name`, формирует из них батчи
+    и отправляет в LlmClient для извлечения осмысленных полей
+    (имя, фамилия, описание). Результаты сохраняются обратно в БД.
+    Реализован механизм повторных попыток для неудачно обработанных батчей.
+
+    Args:
+        start_position: Начальная позиция (OFFSET) для выборки записей из БД.
+        row_count: Количество записей (LIMIT) для обработки. Если -1, обрабатываются все.
     """
     logger.info("Начинаем обработку записей через LLM.")
-    db = DatabaseManager()
-    query: str = f"SELECT * FROM {config.result_table_name} ORDER BY person_id"
-    if 0 < row_count: query += f" LIMIT {row_count}"
-    if 0 < start_position: query += f" OFFSET {start_position}"
-
-    records = db.execute_query(query)
-    total = len(records)
-    llm = LlmClient()
-    CHUNK_SIZE: int = config.CHUNK_SIZE
-    i = 0
-    retry = 0
-
-    update_query = f"UPDATE {config.result_table_name} \
-        SET meaningful_first_name = %s, meaningful_last_name = %s, \
-            meaningful_about = %s, valid = %s WHERE person_id = %s"
-
-    while i < total:
-        record_chunk = records[i:i + CHUNK_SIZE]
-        chunk = transform_record_to_chunk(record_chunk)
-        count_of_affected_rows = process_llm_batch(db, chunk, update_query, llm)
-
-        if count_of_affected_rows < CHUNK_SIZE:
-            logger.warning(f"Батч с {i} по {i + CHUNK_SIZE} не обработался ИИ! "
-                           f"Попытка №{retry}"
-            )
-            retry += 1
-            if retry > 3: retry = 0
-        else: retry = 0
-
-        if retry == 0:
-            i += CHUNK_SIZE
-            logger.info(f"Обработано {min(i, total)} / {total} записей, "
-                        f"БД изменила {count_of_affected_rows} строк"
-            )
-    db.close()
-    logger.info("Обработка LLM завершена.")
-
-
-def process_person_md(db: DatabaseManager, person: dict[str, Any],
-                      update_query: str, exporter: MarkdownExporter,
-                      md_flag: bool, perp: PerplexityClient
-    ) -> int | None:
-    """
-    Обрабатывает одного человека: поиск через Perplexity и экспорт в Markdown.
-    """
-    if not person.get("valid"):
-        return
-
-    ans, urls = perp.search_info(
-        first_name=person.get("meaningful_first_name", ""),
-        last_name=person.get("meaningful_last_name", ""),
-        additional_info=person.get("meaningful_about", ""),
-        personal_channel_name=person.get("personal_channel_username"),
-        personal_channel_about=person.get("personal_channel_about"),
-        temperature=0.1
+    
+    select_query = (
+        f"{SELECT_PERSONS_BASE_QUERY} "
+        f"ORDER BY person_id"
     )
+    if row_count > 0: select_query += f" LIMIT {row_count}"
+    if start_position > 0: select_query += f" OFFSET {start_position}"
 
-    safe_execute(db, update_query, (ans, urls, person.get('person_id')))
+    db = DatabaseManager()
+    try:
+        records = db.execute_query(select_query)
+        total = len(records)
+        if total == 0:
+            logger.info("Нет записей для обработки.")
+            return
 
-    if md_flag:
-        export_to_md(person, exporter, ans, urls)
+        llm = LlmClient()
+        CHUNK_SIZE: int = config.CHUNK_SIZE
+        i = 0
+        retry_count = 0
 
-    return person.get('person_id')
+        while i < total:
+            right_index = min(i + CHUNK_SIZE, total)
+            chunk_to_process: Dict[int, Dict[str, Any]] = {
+                index: {
+                    "person_id": row.get('person_id'),
+                    "first_name": row.get('meaningful_first_name', ''),
+                    "last_name": row.get('meaningful_last_name', ''),
+                    "about": row.get('meaningful_about', '')
+                } for index, row in enumerate(records[i:right_index])
+            }
+
+            parsed_chunk = llm.parse_chunk_to_meaningful(chunk_to_process)
+
+            if not isinstance(parsed_chunk, dict):
+                logger.warning(
+                    f"LLM вернула некорректный тип данных ({type(parsed_chunk)}) "
+                    f"для батча {i}-{right_index}. Попытка №{retry_count + 1}."
+                )
+                retry_count += 1
+            else:
+                updated_count = export_batch_to_db(db, parsed_chunk)
+                if updated_count == len(chunk_to_process):
+                    i += CHUNK_SIZE
+                    retry_count = 0
+                    logger.info(
+                        f"Обработано {min(i, total)} / {total} записей. "
+                        f"БД успешно обновила {updated_count} строк."
+                    )
+                else:
+                    logger.warning(
+                        f"Батч {i}-{right_index} обработан не полностью "
+                        f"(обновлено {updated_count}/{len(chunk_to_process)}). "
+                        f"Попытка №{retry_count + 1}."
+                    )
+                    retry_count += 1
+            
+            if retry_count >= 3:
+                    logger.error(f"Не удалось обработать батч {i}-{right_index} после 3 попыток. Пропускаем.")
+                    i += CHUNK_SIZE
+                    retry_count = 0
+    finally:
+        db.close()
+    logger.info("Обработка записей через LLM завершена.")
 
 
-def export_to_md(person: dict[str, Any], exporter: MarkdownExporter,
-                 ans, urls
+def export_person_to_md(
+        person: dict[str, Any], exporter: MarkdownExporter,
+        summary: str | None, urls: list
     ) -> str | None:
     """
-    Экспорт в Markdown.
+    Экспорт человека в Markdown.
     """
     filepath = exporter.export_to_md(
             first_name=person.get("meaningful_first_name", "Unknown"),
             last_name=person.get("meaningful_last_name", "Unknown"),
-            content=ans,
+            content=summary if summary else '',
             urls=urls,
             personal_channel=person.get('personal_channel_username', '')
         )
@@ -199,120 +254,198 @@ def export_to_md(person: dict[str, Any], exporter: MarkdownExporter,
         return
 
 
-def test_mdsearch(start_position: int, row_count: int) -> None:
-    """
-    Выполняет поиск информации через PerplexityClient
-    и экспортирует результаты в Markdown.
+def test_perpsearch(start_position: int, row_count: int, md_flag: bool) -> None:
+    """Выполняет поиск информации о персонах через Perplexity и сохраняет результаты.
+
+    Для каждой "валидной" персоны из БД формируется поисковый запрос.
+    Найденная информация (summary, urls) и оценка уверенности (confidence)
+    проходят дополнительную проверку через LlmClient и сохраняются в БД.
+    При установленном флаге `md_flag` результаты также экспортируются в Markdown.
+
+    Args:
+        start_position: Начальная позиция (OFFSET) для выборки записей.
+        row_count: Количество записей (LIMIT) для обработки.
+        md_flag: Флаг, разрешающий экспорт результатов в Markdown файлы.
     """
     logger.info("Начинаем поиск информации через PerplexityClient.")
-    perp = PerplexityClient()
+    
+    select_query = (
+        f"{SELECT_PERSONS_BASE_QUERY} "
+        f"WHERE valid ORDER BY person_id"
+    )
+    if row_count > 0: select_query += f" LIMIT {row_count}"
+    if start_position > 0: select_query += f" OFFSET {start_position}"
+
     db = DatabaseManager()
 
-    query: str = f"SELECT * FROM {config.result_table_name} \
-        WHERE valid ORDER BY person_id"
-    if 0 < row_count: query += f" LIMIT {row_count}"
-    if 0 < start_position: query += f" OFFSET {start_position}"
+    try:
+        persons = db.execute_query(select_query)
+        total = len(persons)
+        if total == 0:
+            logger.info("Не найдено валидных персон для поиска информации.")
+            return
 
-    persons = db.execute_query(query)
-    update_query = f"UPDATE {config.result_table_name} \
-        SET summary = %s, urls = %s WHERE person_id = %s"
+        perp_client = PerplexityClient()
+        check_llm = LlmClient()
+        exporter = None
+        if md_flag:
+            date_str = datetime.datetime.now().strftime("%Y-%m-%d-%H%M")
+            exporter = MarkdownExporter(f"data/{date_str}_person_reports")
 
-    date_str: str = datetime.datetime.now().strftime("%Y-%m-%d-%H:%M")
-    exporter = MarkdownExporter(f"data/{date_str}_person_reports")
-
-    count_of_affected_rows = 0
-    total = len(persons)
-    for person in persons:
-        id = process_person_md(db, person, update_query,
-                               exporter, False, perp
-        )
-        count_of_affected_rows += 1
-        if not (count_of_affected_rows % 5) or count_of_affected_rows == total:
-            logger.info(f"Обработано {count_of_affected_rows} / {total} записей, "
-                        f"БД изменила id - {id}"
+        for i, person in enumerate(persons, 1):
+            person_id = person.get('person_id')
+            logger.debug(f"Ищем информацию для person_id: {person_id}")
+            
+            search_result = perp_client.search_info(
+                first_name=person.get("meaningful_first_name", ""),
+                last_name=person.get("meaningful_last_name", ""),
+                about=person.get("meaningful_about", ""),
             )
+            
+            summary = search_result.get("summary")
+            is_summary_valid = check_llm.postcheck(summary)
 
-    db.close()
-    logger.info("Экспорт в Markdown завершен.")
+            params = (
+                summary if is_summary_valid else None,
+                search_result.get("urls"),
+                search_result.get("confidence") if is_summary_valid else "low",
+                person_id
+            )
+            db.execute_query(UPDATE_SUMMARY_QUERY, params)
+
+            if exporter and is_summary_valid:
+                export_person_to_md(
+                    person=person,
+                    exporter=exporter,
+                    summary=summary,
+                    urls=search_result.get("urls", [])
+                )
+
+            logger.info(f"Обработано {i} / {total} записей. ID: {person_id}")
+    finally:
+        db.close()
+    logger.info("Поиск информации завершен.")
+
+
+def test_searching_photos() -> None:
+    """Ищет, анализирует и кластеризует фотографии для персон.
+
+    Функция выполняет следующие шаги:
+    1. Выбирает из БД персон с валидным и заполненным полем summary.
+    2. Извлекает URL всех изображений со страниц, связанных с персоной.
+    3. Фильтрует изображения, оставляя только те, на которых обнаружено одно человеческое лицо.
+    4. Кластеризует отфильтрованные фото по схожести лиц.
+    5. Выбирает самый большой кластер и, если он достаточно велик, сохраняет его в БД.
+    """
+    logger.info("Начинаем поиск и анализ фотографий.")
+
+    select_query = f"""
+        {SELECT_PERSONS_BASE_QUERY}
+        WHERE valid AND summary IS NOT NULL AND TRIM(summary) != ''
+        ORDER BY person_id
+    """
+
+    db = DatabaseManager()
+    try:
+        persons = db.execute_query(select_query)
+        if not persons:
+            logger.info("Не найдено персон для поиска фотографий.")
+            return
+
+        photo_processor = PhotoProcessor()
+        total = len(persons)
+
+        for i, person in enumerate(persons, 1):
+            person_id = person.get("person_id")
+            person_urls = person.get("urls", [])
+
+            logger.info(f"[{i}/{total}] Обработка фотографий для person_id: {person_id}")
+            
+            if not person_urls:
+                continue
+
+            all_image_urls = []
+            for url in person_urls:
+                all_image_urls.extend(photo_processor.extract_image_urls_from_page(url))
+
+            human_face_images = [
+                img_url for img_url in set(all_image_urls)
+                if photo_processor.is_single_human_face(img_url)
+            ]
+            if not human_face_images:
+                continue
+
+            clusters = photo_processor.cluster_faces(human_face_images)
+            if not clusters:
+                continue
+
+            main_cluster = max(clusters, key=len)
+
+            if len(main_cluster) >= config.MIN_PHOTOS_IN_CLUSTER:
+                params = (main_cluster, person_id)
+                db.execute_query(UPDATE_PHOTOS_QUERY, params)
+                logger.info(
+                    f"✅ Для {person_id} найден и сохранен кластер из {len(main_cluster)} фотографий."
+                )
+    finally:
+        db.close()
+    logger.info("Поиск и анализ фотографий завершен.")
 
 
 def export_to_html() -> None:
+    """
+    Экспортирует данные о персонах из БД в единый HTML-файл,
+    используя шаблонизатор Jinja2 для генерации разметки.
+    """
     logger.info("Начинаем экспорт людей в html таблицу.")
     db = DatabaseManager()
-    query: str = f"SELECT * FROM {config.result_table_name} \
-        WHERE valid ORDER BY person_id"
-    persons = db.execute_query(query)
-
     try:
-        html_template = Path('templates/template.html').read_text(encoding='utf-8')
-        person_template = Path('templates/person_row.html').read_text(encoding='utf-8')
-    except FileNotFoundError as e:
-        logger.error(f"Файл шаблона не найден: {e}")
+        select_query: str = f"""
+            {SELECT_PERSONS_BASE_QUERY}
+            WHERE valid AND summary IS NOT NULL
+            AND TRIM(summary) != '' ORDER BY person_id
+        """
+        persons = db.execute_query(select_query)
+    finally:
+        db.close()
+
+    if not persons:
+        logger.warning("Не найдено персон для экспорта.")
         return
+    
+    try:
+        env = Environment(loader=FileSystemLoader('templates/'), autoescape=True)
+        template = env.get_template('template.html')
+        css_content = Path('templates/style.css').read_text(encoding='utf-8')
 
-    people_html = ""
+        for person in persons:
+            person['summary'] = cleaner.clean_summary(person.get('summary', ''))
 
-    for index, person in enumerate(persons):
-        first_name = person.get('meaningful_first_name', '') or ''
-        last_name = person.get('meaningful_last_name', '') or ''
-        about = person.get('meaningful_about', '') or ''
-        username = person.get('username', '') or ''
-        personal_channel_username = person.get('personal_channel_username', '') or ''
-        personal_channel_about = person.get('personal_channel_about', '') or ''
-        summary = person.get('summary', '') or ''
-        person_id = person.get('person_id', '')
-        urls = person.get('urls', []) or []
-
-        full_name = f"{first_name} {last_name} ({person_id})".strip()
-
-        if not personal_channel_username:
-            channel_display = '<span class="empty-field">Отсутствует</span>'
-        else:
-            channel_display = f'@{personal_channel_username}'
-
-        if not personal_channel_about:
-            channel_about_display = '<span class="empty-field">Описание не указано</span>'
-        else:
-            channel_about_display = personal_channel_about
-
-        urls_html = ""
-        if urls:
-            urls_html = '<div class="urls-list"><strong>Ссылки:</strong>'
-            for url in urls:
-                urls_html += f'<div class="url-item">• <a href="{url}" \
-                class="url-link" target="_blank">{url}</a></div>'
-            urls_html += '</div>'
-        else:
-            urls_html = '<div class="no-urls">Ссылки не найдены</div>'
-
-        person_html = person_template.format(
-            index=index,
-            full_name=full_name,
-            username=username,
-            channel_display=channel_display,
-            channel_about_display=channel_about_display,
-            about=about,
-            summary=summary,
-            urls_html=urls_html
+        final_html = template.render(
+            people=persons,
+            css_content=css_content
         )
 
-        people_html += person_html
+        result_filename = "people_analysis.html"
+        Path(result_filename).write_text(final_html, encoding='utf-8')
+        logger.info(f"HTML-таблица успешно сохранена в файл: {result_filename}")
 
-    final_html = html_template.replace('<!-- PEOPLE_DATA -->', people_html)
-
-    result_filename = "people_analysis.html"
-    Path(result_filename).write_text(final_html, encoding='utf-8')
-
-    logger.info(f"HTML таблица сохранена в файл: {result_filename}")
+    except FileNotFoundError as e:
+        logger.error(f"Ошибка: файл шаблона или стилей не найден: {e}")
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка при создании HTML: {e}")
 
 
 def main() -> None:
     """
-    Основная функция CLI. По умолчанию выводит справку.
+    Главная функция для запуска утилиты из командной строки.
     """
-    parser = argparse.ArgumentParser(description="Инструменты работы с БД и LLM")
+    parser = argparse.ArgumentParser(description="Инструменты для обработки данных о людях с помощью БД и LLM.")
     parser.add_argument("--clean-db", action="store_true",
                         help="Очистка и подготовка базы данных"
+    )
+    parser.add_argument("--pre-llm", action="store_true",
+                        help="Обработка записей через LLM"
     )
     parser.add_argument("--llm", action="store_true",
                         help="Обработка записей через LLM"
@@ -320,23 +453,33 @@ def main() -> None:
     parser.add_argument("--mdsearch", action="store_true",
                         help="Поиск информации и экспорт в Markdown"
     )
+    parser.add_argument("--photos", action="store_true",
+                        help="Поиск фотографий из ссылок"
+    )
     parser.add_argument("--start", type=int, default=0,
                         help="Начальная позиция записи"
     )
     parser.add_argument("--count", type=int, default=-1,
                         help="Количество записей"
     )
-    parser.add_argument("--to_html", action="store_true",
+    parser.add_argument("--md", action="store_true", default=False,
+                        help="Разрешить экспорт в md"
+    )
+    parser.add_argument("--to-html", action="store_true",
                         help="Экспорт в html таблицу"
     )
     args = parser.parse_args()
 
     if args.clean_db:
         clean_and_create_db()
+    elif args.pre_llm:
+        pre_llm()
     elif args.llm:
         test_llm(start_position=args.start, row_count=args.count)
     elif args.mdsearch:
-        test_mdsearch(start_position=args.start, row_count=args.count)
+        test_perpsearch(start_position=args.start, row_count=args.count, md_flag=args.md)
+    elif args.photos:
+        test_searching_photos()
     elif args.to_html:
         export_to_html()
     else:

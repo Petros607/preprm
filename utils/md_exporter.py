@@ -21,7 +21,7 @@ class MarkdownExporter:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"MarkdownExporter инициализирован с директорией: {output_dir}")
+        self.logger.debug(f"MarkdownExporter инициализирован с директорией: {output_dir}")
 
     def create_filename(self, first_name: str,
                         last_name: str, extension: str = "md"
@@ -191,7 +191,6 @@ class MarkdownExporter:
             str: Домен из URL
         """
         try:
-            # Убираем протокол и путь, оставляем только домен
             domain = url.split('//')[-1].split('/')[0]
             return domain
         except Exception as e:

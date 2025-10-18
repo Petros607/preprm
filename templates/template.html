@@ -1,143 +1,94 @@
+<!-- templates/template.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Анализ людей</title>
+    <title>Экспорт людей</title>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-            padding: 20px;
-            background-color: #f5f5f5;
-            min-width: 1400px;
-        }
-        .container {
-            max-width: none;
-            margin: 0 auto;
-            overflow-x: auto;
-        }
-        h1 {
-            text-align: center;
-            color: #333;
-            margin-bottom: 30px;
-        }
-        table {
-            width: 100%;
-            min-width: 1600px;
-            border-collapse: collapse;
-            background-color: white;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        th {
-            padding: 15px;
-            text-align: left;
-            font-weight: 600;
-        }
-        .th-left {
-            background-color: #2196F3;
-            color: white;
-        }
-        .th-right {
-            background-color: #4CAF50;
-            color: white;
-        }
-        td {
-            padding: 15px;
-            border-bottom: 1px solid #ddd;
-            vertical-align: top;
-        }
-        tr:hover {
-            background-color: #f8f9fa;
-        }
-        .index-column {
-            width: 50px;
-            text-align: center;
-            font-weight: bold;
-            color: #666;
-            background-color: #f8f9fa;
-            border-right: 1px solid #e9ecef;
-        }
-        .left-column {
-            width: 40%;
-            border-right: 2px solid #e9ecef;
-            background-color: #f8f9fa;
-        }
-        .right-column {
-            width: 55%;
-        }
-        .person-name {
-            font-weight: bold;
-            color: #2c3e50;
-            font-size: 1.1em;
-            margin-bottom: 8px;
-        }
-        .person-details {
-            margin-top: 10px;
-        }
-        .detail-item {
-            margin-bottom: 6px;
-            font-size: 0.9em;
-        }
-        .detail-label {
-            font-weight: 600;
-            color: #555;
-        }
-        .detail-value {
-            color: #333;
-        }
-        .about-text {
-            color: #666;
-            font-style: italic;
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px dashed #ddd;
-        }
-        .summary-text {
-            color: #333;
-            line-height: 1.5;
-            text-align: justify;
-            margin-bottom: 15px;
-        }
-        .urls-list {
-            margin-top: 10px;
-        }
-        .url-item {
-            margin-bottom: 5px;
-        }
-        .url-link {
-            color: #007bff;
-            text-decoration: none;
-            word-break: break-all;
-        }
-        .url-link:hover {
-            text-decoration: underline;
-        }
-        .no-urls {
-            color: #999;
-            font-style: italic;
-        }
-        .empty-field {
-            color: #999;
-            font-style: italic;
-        }
+        {{ css_content | safe }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Анализ людей</h1>
-        <table>
+        <h1>Список людей</h1>
+        <table class="people-table">
             <thead>
                 <tr>
-                    <th class="index-column">№</th>
-                    <th class="th-left">Основная информация</th>
-                    <th class="th-right">Анализ и ссылки</th>
+                    <th width="5%">№</th>
+                    <th width="25%">Информация о человеке</th>
+                    <th width="40%">Резюме и ссылки</th>
+                    <th width="30%">Фотографии</th>
                 </tr>
             </thead>
             <tbody>
-                <!-- PEOPLE_DATA -->
+                {% for person in people %}
+                    <tr class="person-row">
+                        <td class="number">
+                            {{ loop.index }}
+                        </td>
+                        
+                        <td class="person-info">
+                            <div class="name-section">
+                                {{ person.first_name }} {{ person.last_name }} --> <strong>{{ person.meaningful_first_name }} {{ person.meaningful_last_name }} </strong> ({{ person.person_id }})<br>
+                            </div>
+                            
+                            <div class="username-section">
+                                <strong>Username:</strong> {{ person.username }}
+                            </div>
+                            
+                            <div class="about-section">
+                                <strong>About:</strong> {{ person.about }}
+                            </div>
+                            
+                            <div class="channel-section">
+                                <strong>Канал:</strong> {{ person.personal_channel_title }}<br>
+                                <strong>О канале:</strong> {{ person.personal_channel_about }}
+                            </div>
+                            
+                            <div class="separator">---------</div>
+                            
+                            <div class="meaningful-about">
+                                {{ person.meaningful_about }}
+                            </div>
+                            
+                            <div class="separator">---------</div>
+                        </td>
+                        
+                        <td class="summary-section">
+                            <div class="summary-content">
+                                {{ person.summary }}
+                            </div>
+                            
+                            <div class="urls-section">
+                                <strong>Ссылки:</strong>
+                                <ul class="urls-list">
+                                    {% for url in person.urls %}
+                                        <li><a href="{{ url }}" target="_blank">{{ url }}</a></li>
+                                    {% endfor %}
+                                </ul>
+                            </div>
+                        </td>
+                        
+                        <td class="photos-section">
+                            <div class="photos-grid">
+                                {% if person.photos %}
+                                    {% for photo_url in person.photos %}
+                                    <div class="photo-item">
+                                        <img src="{{ photo_url }}" alt="Фото" onerror="this.style.display='none'" loading="lazy">
+                                    </div>
+                                    {% endfor %}
+                                {% else %}
+                                    <div class="photo-placeholder">Нет фото</div>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="4" style="text-align: center;">Данные не найдены.</td>
+                    </tr>
+                {% endfor %}
             </tbody>
         </table>
     </div>
