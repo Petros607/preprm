@@ -50,3 +50,5 @@ ENRU_CHARS_PATTERN = re.compile(r'[^A-Za-zА-Яа-яЁё\s-]+')
 IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png"]
 
 MIN_PHOTOS_IN_CLUSTER = 2
+
+PATH_PROMPTS = 'prompts/'
