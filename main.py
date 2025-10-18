@@ -260,9 +260,51 @@ def export_person_to_md(
         logger.error("❌ Ошибка создания файла")
         return
 
+async def process_person_for_search(
+    person: dict,
+    perp_client: PerplexityClient,
+    check_llm: LlmClient,
+    db: DatabaseManager,
+    exporter: MarkdownExporter | None
+) -> None:
+    """
+    Выполняет полный цикл поиска и сохранения информации для одной персоны.
+    """
+    person_id = person.get('person_id')
+    try:
+        logger.info(f"Начинаем поиск для person_id: {person_id}")
+        search_result = await perp_client.async_search_info(
+            first_name=person.get("meaningful_first_name", ""),
+            last_name=person.get("meaningful_last_name", ""),
+            about=person.get("meaningful_about", ""),
+        )
 
-def test_perpsearch(start_position: int, row_count: int, md_flag: bool) -> None:
-    """Выполняет поиск информации о персонах через Perplexity и сохраняет результаты.
+        summary = search_result.get("summary")
+        if not summary: summary = ''
+        is_summary_valid = await check_llm.async_postcheck(summary)
+
+        params = (
+            summary if is_summary_valid else None,
+            search_result.get("urls"),
+            search_result.get("confidence") if is_summary_valid else "low",
+            person_id
+        )
+        await asyncio.to_thread(db.execute_query, config.UPDATE_SUMMARY_QUERY, params)
+
+        if exporter and is_summary_valid:
+            await asyncio.to_thread(
+                export_person_to_md,
+                person=person,
+                exporter=exporter,
+                summary=summary,
+                urls=search_result.get("urls", [])
+            )
+        logger.info(f"✅ Успешно обработан person_id: {person_id}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при обработке person_id {person_id}: {e}", exc_info=True)
+
+async def test_perpsearch(start_position: int, row_count: int, md_flag: bool) -> None:
+    """(async) Выполняет поиск информации о персонах через Perplexity и сохраняет результаты.
 
     Для каждой "валидной" персоны из БД формируется поисковый запрос.
     Найденная информация (summary, urls) и оценка уверенности (confidence)
@@ -299,36 +341,18 @@ def test_perpsearch(start_position: int, row_count: int, md_flag: bool) -> None:
             date_str = datetime.datetime.now().strftime("%Y-%m-%d-%H%M")
             exporter = MarkdownExporter(f"data/{date_str}_person_reports")
 
-        for i, person in enumerate(persons, 1):
-            person_id = person.get('person_id')
-            logger.debug(f"Ищем информацию для person_id: {person_id}")
-            
-            search_result = perp_client.search_info(
-                first_name=person.get("meaningful_first_name", ""),
-                last_name=person.get("meaningful_last_name", ""),
-                about=person.get("meaningful_about", ""),
-            )
-            
-            summary = search_result.get("summary")
-            is_summary_valid = check_llm.postcheck(summary)
+        semaphore = asyncio.Semaphore(config.ASYNC_SEARCH_REQUESTS)
 
-            params = (
-                summary if is_summary_valid else None,
-                search_result.get("urls"),
-                search_result.get("confidence") if is_summary_valid else "low",
-                person_id
-            )
-            db.execute_query(config.UPDATE_SUMMARY_QUERY, params)
+        async def worker_with_semaphore(person):
+            async with semaphore:
+                await process_person_for_search(person, perp_client, check_llm, db, exporter)
 
-            if exporter and is_summary_valid:
-                export_person_to_md(
-                    person=person,
-                    exporter=exporter,
-                    summary=summary,
-                    urls=search_result.get("urls", [])
-                )
+        tasks = [worker_with_semaphore(person) for person in persons]
+        
+        await asyncio.gather(*tasks)
+        
+        logger.info(f"Обработано {total} записей.")
 
-            logger.info(f"Обработано {i} / {total} записей. ID: {person_id}")
     finally:
         db.close()
     logger.info("Поиск информации завершен.")
@@ -457,7 +481,7 @@ async def main() -> None:
     parser.add_argument("--llm", action="store_true",
                         help="Обработка записей через LLM"
     )
-    parser.add_argument("--mdsearch", action="store_true",
+    parser.add_argument("--search", action="store_true",
                         help="Поиск информации и экспорт в Markdown"
     )
     parser.add_argument("--photos", action="store_true",
@@ -483,8 +507,8 @@ async def main() -> None:
         pre_llm()
     elif args.llm:
         await test_llm(start_position=args.start, row_count=args.count)
-    elif args.mdsearch:
-        test_perpsearch(start_position=args.start, row_count=args.count, md_flag=args.md)
+    elif args.search:
+        await test_perpsearch(start_position=args.start, row_count=args.count, md_flag=args.md)
     elif args.photos:
         test_searching_photos()
     elif args.to_html:

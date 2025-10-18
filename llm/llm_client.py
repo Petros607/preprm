@@ -140,3 +140,23 @@ class LlmClient(BaseLLMClient):
             self.logger.warning("Ожидался словарь, но получен другой тип; возвращаем {}.")
             return {}
         return response
+    
+    async def async_postcheck(self, text: str) -> bool:
+        """АСИНХРОННАЯ ВЕРСИЯ. Проверяет, является ли текст содержательным."""
+        prompt = self._render_prompt("postcheck", text=text)
+
+        if not prompt:
+            return False
+
+        response, _raw = await self._async_request_llm(
+            prompt=prompt,
+            model=self.config.check_model,
+            response_format="json_object"
+        )
+        
+        if not isinstance(response, dict) or "is_valid" not in response:
+            self.logger.warning("Некорректный формат ответа; возвращаем False.")
+            return False
+        
+        return response.get("is_valid", False)
+    
