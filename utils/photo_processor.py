@@ -1,15 +1,17 @@
+import logging
+from io import BytesIO
+from urllib.parse import urljoin
+
+import config
+import face_recognition
+import numpy as np
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
 from PIL import Image
-import numpy as np
-import face_recognition
-from io import BytesIO
 from sklearn.cluster import DBSCAN
-import config
-import logging
 
 logger = logging.getLogger(__name__)
+
 
 class PhotoProcessor:
     """
@@ -161,15 +163,14 @@ class PhotoProcessor:
 
         labels = db.labels_
         unique_labels = set(labels)
-        
+
         clusters = []
         for label in unique_labels:
             if label == -1:
                 continue
-            
+
             indices = np.where(labels == label)[0]
             cluster = [urls[i] for i in indices]
             clusters.append(cluster)
 
         return clusters
-    
