@@ -46,7 +46,7 @@ class PerplexityClient(BaseLLMClient):
         model_to_use = model or self.config.perplexity_model
         self.logger.debug("Вызов ask_perplexity",
             extra={
-                "model": model_to_use, 
+                "model": model_to_use,
                 "response_format": response_format
             }
         )
@@ -56,7 +56,6 @@ class PerplexityClient(BaseLLMClient):
             model=model_to_use,
             response_format=response_format,
             temperature=temperature,
-            # max_tokens=max_tokens,
         )
 
         if response_format == "json_object":
@@ -136,11 +135,11 @@ class PerplexityClient(BaseLLMClient):
             extra={"prompt_preview": (prompt[:200] + "...")
                    if len(prompt) > 200 else prompt}
         )
-        
+
         text, urls = self.ask_perplexity(prompt=prompt)
 
         summary = text.strip() or None
-        person_found = bool(summary) #TODO можно что-то лучше придумать
+        person_found = bool(summary)  # TODO можно что-то лучше придумать
         confidence = self._estimate_confidence(summary, len(urls))
 
         return {
@@ -149,7 +148,6 @@ class PerplexityClient(BaseLLMClient):
             "person_found": person_found,
             "confidence": confidence,
         }
-    
 
     def _estimate_confidence(self, summary: str | None, sources: int) -> str:
         """Простейшая эвристика уверенности."""
@@ -157,15 +155,14 @@ class PerplexityClient(BaseLLMClient):
             "поиск по запросу",
             "найти не удалось", "данных не найдено"
         ]
-        if not summary or not(sources) or any(m in summary.lower() for m in markers_l):
+        if not summary or not (sources) or any(m in summary.lower() for m in markers_l):
             return "low"
 
         markers_m = [
-            "по всей видимости", "вероятно", 
+            "по всей видимости", "вероятно",
             "предположительно"
         ]
         return "medium" if any(m in summary.lower() for m in markers_m) else "high"
-
 
     def _extract_urls_from_response(self, completion_response: Any | None) -> list[str]:
         """Извлекает URL-ы из сырого ответа completion.
@@ -214,7 +211,7 @@ class PerplexityClient(BaseLLMClient):
     ) -> Any:
         """АСИНХРОННАЯ ВЕРСИЯ. Универсальный метод для обращения к Perplexity."""
         model_to_use = model or self.config.perplexity_model
-        
+
         result, completion = await self._async_request_llm(
             prompt=prompt,
             model=model_to_use,
@@ -248,9 +245,9 @@ class PerplexityClient(BaseLLMClient):
             "perp_search",
             pieces=pieces
         )
-        
+
         if not prompt:
-            return { "summary": None, "urls": [], "person_found": False, "confidence": "low" }
+            return {"summary": None, "urls": [], "person_found": False, "confidence": "low"}
 
         text, urls = await self.async_ask_perplexity(prompt=prompt)
 

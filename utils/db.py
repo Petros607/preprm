@@ -163,8 +163,8 @@ class DatabaseManager:
         FROM {source_table_name}
         WHERE data ? 'about'
         AND {source_table_name}.person_id IN (
-            SELECT telegram_id 
-            FROM public.channel_subscribers 
+            SELECT telegram_id
+            FROM public.channel_subscribers
             WHERE channel_id = -1002240495824
         )
         """

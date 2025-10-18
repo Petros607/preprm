@@ -23,7 +23,7 @@ class LlmClient(BaseLLMClient):
         self.logger.debug("LlmClient инициализирован",
                           extra={"default_model": self.config.default_model})
 
-    def ask_llm(self, prompt: str, 
+    def ask_llm(self, prompt: str,
                 response_format: str = "json_object",
                 temperature: float = 0.0
         ) -> Any:
@@ -65,8 +65,8 @@ class LlmClient(BaseLLMClient):
 
         prompt = self._render_prompt(
             "parse_chunk",
-            chunk_size = len(chunk),
-            chunk_json = chunk_json
+            chunk_size=len(chunk),
+            chunk_json=chunk_json
         )
 
         self.logger.debug("Вызов ask_llm для parse_names_and_about_chunk",
@@ -86,23 +86,23 @@ class LlmClient(BaseLLMClient):
         """
         prompt = self._render_prompt(
             "postcheck",
-            text = text
+            text=text
         )
-        
+
         response, _raw = self._request_llm(
             prompt=prompt,
             model=self.config.check_model,
             response_format="json_object"
         )
-        
+
         if not isinstance(response, dict) or "is_valid" not in response:
             self.logger.warning("Некорректный формат ответа от нейросети; возвращаем False по умолчанию.")
             return False
-        
+
         return response.get("is_valid", False)
 
     # --- Асинхронные методы ---
-    async def async_ask_llm(self, prompt: str, 
+    async def async_ask_llm(self, prompt: str,
                 response_format: str = "json_object",
                 temperature: float = 0.0
         ) -> Any:
@@ -114,7 +114,7 @@ class LlmClient(BaseLLMClient):
             temperature=temperature,
         )
         return result
-    
+
     async def async_parse_chunk_to_meaningful(self, chunk: dict[str, str]) -> dict[str, Any]:
         """АСИНХРОННАЯ ВЕРСИЯ. Обрабатывает пачку записей для извлечения имен и информации."""
         try:
@@ -127,20 +127,20 @@ class LlmClient(BaseLLMClient):
 
         prompt = self._render_prompt(
             "parse_chunk",
-            chunk_size = len(chunk),
-            chunk_json = chunk_json
+            chunk_size=len(chunk),
+            chunk_json=chunk_json
         )
 
         self.logger.debug("Асинхронный вызов async_ask_llm для async_parse_chunk_to_meaningful",
                           extra={"chunk_size": len(chunk)}
         )
-        
+
         response = await self.async_ask_llm(prompt, response_format="json_object")
         if not isinstance(response, dict):
             self.logger.warning("Ожидался словарь, но получен другой тип; возвращаем {}.")
             return {}
         return response
-    
+
     async def async_postcheck(self, text: str) -> bool:
         """АСИНХРОННАЯ ВЕРСИЯ. Проверяет, является ли текст содержательным."""
         prompt = self._render_prompt("postcheck", text=text)
@@ -153,10 +153,9 @@ class LlmClient(BaseLLMClient):
             model=self.config.check_model,
             response_format="json_object"
         )
-        
+
         if not isinstance(response, dict) or "is_valid" not in response:
             self.logger.warning("Некорректный формат ответа; возвращаем False.")
             return False
-        
+
         return response.get("is_valid", False)
-    

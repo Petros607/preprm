@@ -1,10 +1,10 @@
 import json
 import logging
 from typing import Any
-from jinja2 import Environment, FileSystemLoader
 
-from config import LlmConfig, PATH_PROMPTS
-from openai import OpenAI, AsyncOpenAI
+from config import PATH_PROMPTS, LlmConfig
+from jinja2 import Environment, FileSystemLoader
+from openai import AsyncOpenAI, OpenAI
 
 
 class BaseLLMClient:
@@ -32,7 +32,7 @@ class BaseLLMClient:
                           )
         self.jinja_env = Environment(
             loader=FileSystemLoader(PATH_PROMPTS),
-            autoescape=False
+            autoescape=True
         )
 
     def _safe_parse_json(self, raw: str | None) -> dict[str, Any]:
@@ -62,7 +62,7 @@ class BaseLLMClient:
                               exc_info=exc, extra={"raw": raw}
                               )
             return {}
-        
+
     def _render_prompt(self, template_name: str, **kwargs) -> str:
         """Загружает и рендерит шаблон промпта с переданными переменными."""
         try:
@@ -188,7 +188,7 @@ class BaseLLMClient:
             rf = {"type": response_format} if response_format == "json_object" else None
 
             self.logger.debug("Асинхронный вызов OpenAI.chat.completions.create")
-            
+
             completion = await self.async_client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": prompt}],
@@ -202,7 +202,7 @@ class BaseLLMClient:
             raw_text: str | None = None
             if content is not None:
                 raw_text = getattr(content, "content", None)
-            
+
             self.logger.debug("Получен сырой ответ от LLM (async)",
                 extra={"raw_text_preview": (raw_text[:500] if raw_text else None)}
             )

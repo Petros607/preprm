@@ -1,18 +1,18 @@
 import argparse
+import asyncio
 import datetime
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
-import asyncio
+from typing import Any
 
 import config
+from jinja2 import Environment, FileSystemLoader
 from llm.llm_client import LlmClient
 from llm.perp_client import PerplexityClient
 from logger import setup_logging
-from jinja2 import Environment, FileSystemLoader
+from utils import cleaner
 from utils.db import DatabaseManager
 from utils.md_exporter import MarkdownExporter
-from utils import cleaner
 from utils.photo_processor import PhotoProcessor
 
 setup_logging(level=logging.INFO)
@@ -51,12 +51,12 @@ def pre_llm() -> None:
     db = DatabaseManager()
     try:
         select_query = f"""
-            SELECT person_id, first_name, last_name, about, 
+            SELECT person_id, first_name, last_name, about,
                    personal_channel_title, personal_channel_about
             FROM {config.result_table_name} ORDER BY person_id
         """
         persons = db.execute_query(select_query)
-    
+
         for person in persons:
             person_id = cleaner.normalize_empty(person.get('person_id'))
             first_name = cleaner.clean_name_field(cleaner.normalize_empty(person.get('first_name')))
@@ -64,7 +64,7 @@ def pre_llm() -> None:
             about = cleaner.normalize_empty(person.get('about'))
             channel_title = cleaner.normalize_empty(person.get('personal_channel_title'))
             channel_about = cleaner.normalize_empty(person.get('personal_channel_about'))
-            
+
             if first_name and ' ' in first_name and not last_name:
                 parts = first_name.split(' ', 1)
                 if len(parts) == 2:
@@ -78,7 +78,7 @@ def pre_llm() -> None:
     logger.info("Предварительная обработка завершена.")
 
 
-def export_batch_to_db(db: DatabaseManager, parsed_chunk: Dict[str, Dict[str, Any]]) -> int:
+def export_batch_to_db(db: DatabaseManager, parsed_chunk: dict[str, dict[str, Any]]) -> int:
     """Сохраняет результаты обработки одного батча от LLM в базу данных.
 
     Args:
@@ -103,7 +103,7 @@ def export_batch_to_db(db: DatabaseManager, parsed_chunk: Dict[str, Dict[str, An
         first_name = data.get('meaningful_first_name')
         last_name = data.get('meaningful_last_name')
         about = data.get('meaningful_about')
-        
+
         is_valid = bool(first_name and last_name and about)
         params = (first_name, last_name, about, is_valid, person_id)
 
@@ -121,9 +121,9 @@ def export_batch_to_db(db: DatabaseManager, parsed_chunk: Dict[str, Dict[str, An
 
 
 async def process_chunk(
-    llm: LlmClient, 
-    db: DatabaseManager, 
-    chunk_to_process: Dict[int, Dict[str, Any]],
+    llm: LlmClient,
+    db: DatabaseManager,
+    chunk_to_process: dict[int, dict[str, Any]],
     chunk_index: int
 ) -> bool:
     """
@@ -132,7 +132,7 @@ async def process_chunk(
     """
     for attempt in range(config.MAX_RETRIES):
         logger.info(f"Обработка чанка #{chunk_index}. Попытка {attempt + 1}/{config.MAX_RETRIES}.")
-        
+
         try:
             parsed_chunk = await llm.async_parse_chunk_to_meaningful(chunk_to_process)
 
@@ -146,7 +146,7 @@ async def process_chunk(
 
             # синхронная функция БД в отдельном потоке, чтобы не блокировать #TODO
             updated_count = await asyncio.to_thread(export_batch_to_db, db, parsed_chunk)
-            
+
             if updated_count == len(chunk_to_process):
                 logger.info(
                     f"✅ Чанк #{chunk_index} успешно обработан и сохранен в БД "
@@ -181,7 +181,7 @@ async def test_llm(start_position: int, row_count: int) -> None:
         row_count: Количество записей (LIMIT) для обработки. Если -1, обрабатываются все.
     """
     logger.info("Начинаем обработку записей через LLM.")
-    
+
     select_query = (
         f"{config.SELECT_PERSONS_BASE_QUERY} "
         f"ORDER BY person_id"
@@ -212,21 +212,22 @@ async def test_llm(start_position: int, row_count: int) -> None:
                 } for index, row in enumerate(records[i:right_index])
             }
             all_chunks.append(chunk)
-        
+
         logger.info(f"Подготовлено {len(all_chunks)} чанков для обработки.")
 
         semaphore = asyncio.Semaphore(config.ASYNC_LLM_REQUESTS_WORKERS)
+
         async def worker_with_semaphore(chunk, index):
             async with semaphore:
                 return await process_chunk(llm, db, chunk, index)
-            
+
         tasks = [
-            worker_with_semaphore(chunk, i) 
+            worker_with_semaphore(chunk, i)
             for i, chunk in enumerate(all_chunks)
         ]
 
         results = await asyncio.gather(*tasks)
-        
+
         successful_chunks = sum(1 for res in results if res)
         logger.info(
             f"Обработка завершена. Успешно обработано: "
@@ -248,7 +249,7 @@ def export_person_to_md(
     filepath = exporter.export_to_md(
             first_name=person.get("meaningful_first_name", "Unknown"),
             last_name=person.get("meaningful_last_name", "Unknown"),
-            content=summary if summary else '',
+            content=summary or '',
             urls=urls,
             personal_channel=person.get('personal_channel_username', '')
         )
@@ -259,6 +260,7 @@ def export_person_to_md(
     else:
         logger.error("❌ Ошибка создания файла")
         return
+
 
 async def process_person_for_search(
     person: dict,
@@ -303,6 +305,7 @@ async def process_person_for_search(
     except Exception as e:
         logger.error(f"❌ Ошибка при обработке person_id {person_id}: {e}", exc_info=True)
 
+
 async def test_perpsearch(start_position: int, row_count: int, md_flag: bool) -> None:
     """(async) Выполняет поиск информации о персонах через Perplexity и сохраняет результаты.
 
@@ -317,7 +320,7 @@ async def test_perpsearch(start_position: int, row_count: int, md_flag: bool) ->
         md_flag: Флаг, разрешающий экспорт результатов в Markdown файлы.
     """
     logger.info("Начинаем поиск информации через PerplexityClient.")
-    
+
     select_query = (
         f"{config.SELECT_PERSONS_BASE_QUERY} "
         f"WHERE valid ORDER BY person_id"
@@ -348,9 +351,9 @@ async def test_perpsearch(start_position: int, row_count: int, md_flag: bool) ->
                 await process_person_for_search(person, perp_client, check_llm, db, exporter)
 
         tasks = [worker_with_semaphore(person) for person in persons]
-        
+
         await asyncio.gather(*tasks)
-        
+
         logger.info(f"Обработано {total} записей.")
 
     finally:
@@ -391,7 +394,7 @@ def test_searching_photos() -> None:
             person_urls = person.get("urls", [])
 
             logger.info(f"[{i}/{total}] Обработка фотографий для person_id: {person_id}")
-            
+
             if not person_urls:
                 continue
 
@@ -443,7 +446,7 @@ def export_to_html() -> None:
     if not persons:
         logger.warning("Не найдено персон для экспорта.")
         return
-    
+
     try:
         env = Environment(loader=FileSystemLoader('templates/'), autoescape=True)
         template = env.get_template('template.html')
