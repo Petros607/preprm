@@ -57,7 +57,7 @@ class PhotoProcessor:
             soup = BeautifulSoup(content, "html.parser")
             image_urls = set()
 
-            for img_tag in soup.find_all("img"):
+            for img_tag in soup.find_all(config.IMAGE_EXTENSIONS):
                 src = img_tag.get("src") or img_tag.get("data-src")
                 if not src:
                     continue

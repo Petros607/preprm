@@ -215,7 +215,7 @@ async def test_llm(start_position: int, row_count: int) -> None:
         
         logger.info(f"Подготовлено {len(all_chunks)} чанков для обработки.")
 
-        semaphore = asyncio.Semaphore(config.ASYNC_CONCURRENT_REQUESTS)
+        semaphore = asyncio.Semaphore(config.ASYNC_LLM_REQUESTS_WORKERS)
         async def worker_with_semaphore(chunk, index):
             async with semaphore:
                 return await process_chunk(llm, db, chunk, index)
@@ -341,7 +341,7 @@ async def test_perpsearch(start_position: int, row_count: int, md_flag: bool) ->
             date_str = datetime.datetime.now().strftime("%Y-%m-%d-%H%M")
             exporter = MarkdownExporter(f"data/{date_str}_person_reports")
 
-        semaphore = asyncio.Semaphore(config.ASYNC_SEARCH_REQUESTS)
+        semaphore = asyncio.Semaphore(config.ASYNC_SEARCH_REQUESTS_WORKERS)
 
         async def worker_with_semaphore(person):
             async with semaphore:
