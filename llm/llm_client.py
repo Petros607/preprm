@@ -78,11 +78,12 @@ class LlmClient(BaseLLMClient):
             return {}
         return response
 
-    # def postcheck(self, chunk: dict[str, str]) -> dict[str, bool]:
     def postcheck(self, text) -> bool:
         """
         Проверяет, является ли текст содержательным описанием человека или заглушкой.
         Возвращает словарь с результатом классификации.
+        Args:
+            chunk: Текст, который надо проверить
         """
         prompt = self._render_prompt(
             "postcheck",
@@ -106,7 +107,7 @@ class LlmClient(BaseLLMClient):
                 response_format: str = "json_object",
                 temperature: float = 0.0
         ) -> Any:
-        """АСИНХРОННАЯ ВЕРСИЯ. Универсальный метод для обращения к LLM."""
+        """(async) async_ask_llm."""
         result, _raw = await self._async_request_llm(
             prompt=prompt,
             model=self.config.default_model,
@@ -116,7 +117,7 @@ class LlmClient(BaseLLMClient):
         return result
 
     async def async_parse_chunk_to_meaningful(self, chunk: dict[str, str]) -> dict[str, Any]:
-        """АСИНХРОННАЯ ВЕРСИЯ. Обрабатывает пачку записей для извлечения имен и информации."""
+        """(async) parse_chunk_to_meaningful"""
         try:
             chunk_json = json.dumps(chunk, ensure_ascii=False)
         except Exception as exc:
@@ -142,7 +143,7 @@ class LlmClient(BaseLLMClient):
         return response
 
     async def async_postcheck(self, text: str) -> bool:
-        """АСИНХРОННАЯ ВЕРСИЯ. Проверяет, является ли текст содержательным."""
+        """(async) postcheck"""
         prompt = self._render_prompt("postcheck", text=text)
 
         if not prompt:

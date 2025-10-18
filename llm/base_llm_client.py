@@ -169,7 +169,7 @@ class BaseLLMClient:
         extra_body: dict[str, Any] | None = None,
     ) -> tuple[Any, Any | None]:
         """
-        АСИНХРОННАЯ ВЕРСИЯ. Универсальный метод выполнения запроса к LLM.
+        (async) _request_llm
         """
         self.logger.debug(
             "Подготовка АСИНХРОННОГО запроса к LLM",

@@ -474,12 +474,12 @@ async def main() -> None:
     """
     Главная функция для запуска утилиты из командной строки.
     """
-    parser = argparse.ArgumentParser(description="Инструменты для обработки данных о людях с помощью БД и LLM.")
+    parser = argparse.ArgumentParser(description="Инструменты для поиска информации с помощью LLM.")
     parser.add_argument("--clean-db", action="store_true",
                         help="Очистка и подготовка базы данных"
     )
     parser.add_argument("--pre-llm", action="store_true",
-                        help="Обработка записей через LLM"
+                        help="Предобработка данных"
     )
     parser.add_argument("--llm", action="store_true",
                         help="Обработка записей через LLM"

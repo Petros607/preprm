@@ -209,7 +209,7 @@ class PerplexityClient(BaseLLMClient):
         response_format: str = "text",
         temperature: float = 0.2,
     ) -> Any:
-        """АСИНХРОННАЯ ВЕРСИЯ. Универсальный метод для обращения к Perplexity."""
+        """(async) ask_perplexity"""
         model_to_use = model or self.config.perplexity_model
 
         result, completion = await self._async_request_llm(
@@ -235,7 +235,7 @@ class PerplexityClient(BaseLLMClient):
         personal_channel_name: str | None = None,
         personal_channel_about: str | None = None
     ) -> dict:
-        """АСИНХРОННАЯ ВЕРСИЯ. Генерирует краткую аналитическую справку о человеке."""
+        """(async) search_info"""
         pieces = [
             f"- Имя: {first_name}",
             f"- Фамилия: {last_name}",
