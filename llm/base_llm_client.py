@@ -158,7 +158,7 @@ class BaseLLMClient:
                 return {}, None
             return "", None
 
-    async def _a_request_llm(
+    async def _async_request_llm(
         self,
         prompt: str,
         model: str,

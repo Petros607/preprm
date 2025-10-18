@@ -52,3 +52,39 @@ IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png"]
 MIN_PHOTOS_IN_CLUSTER = 2
 
 PATH_PROMPTS = 'prompts/'
+
+ASYNC_CONCURRENT_REQUESTS = 2
+MAX_RETRIES = 3
+
+SELECT_PERSONS_BASE_QUERY = f"SELECT * FROM {result_table_name}"
+
+UPDATE_MEANINGFUL_FIELDS_QUERY = f"""
+    UPDATE {result_table_name}
+    SET meaningful_first_name = %s, 
+        meaningful_last_name = %s,
+        meaningful_about = %s
+    WHERE person_id = %s
+"""
+
+UPDATE_LLM_RESULTS_QUERY = f"""
+    UPDATE {result_table_name}
+    SET meaningful_first_name = %s, 
+        meaningful_last_name = %s,
+        meaningful_about = %s, 
+        valid = %s
+    WHERE person_id = %s
+"""
+
+UPDATE_SUMMARY_QUERY = f"""
+    UPDATE {result_table_name}
+    SET summary = %s, 
+        urls = %s, 
+        confidence = %s
+    WHERE person_id = %s
+"""
+
+UPDATE_PHOTOS_QUERY = f"""
+    UPDATE {result_table_name}
+    SET photos = %s
+    WHERE person_id = %s
+"""

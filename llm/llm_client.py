@@ -45,19 +45,6 @@ class LlmClient(BaseLLMClient):
             temperature=temperature,
         )
         return result
-    
-    async def a_ask_llm(self, prompt: str, 
-                response_format: str = "json_object",
-                temperature: float = 0.0
-        ) -> Any:
-        """АСИНХРОННАЯ ВЕРСИЯ. Универсальный метод для обращения к LLM."""
-        result, _raw = await self._a_request_llm(
-            prompt=prompt,
-            model=self.config.default_model,
-            response_format=response_format,
-            temperature=temperature,
-        )
-        return result
 
     def parse_chunk_to_meaningful(self, chunk: dict[str, str]) -> dict[str, Any]:
         """Обрабатывает пачку записей для извлечения имен и информации.
@@ -113,3 +100,43 @@ class LlmClient(BaseLLMClient):
             return False
         
         return response.get("is_valid", False)
+
+    # --- Асинхронные методы ---
+    async def async_ask_llm(self, prompt: str, 
+                response_format: str = "json_object",
+                temperature: float = 0.0
+        ) -> Any:
+        """АСИНХРОННАЯ ВЕРСИЯ. Универсальный метод для обращения к LLM."""
+        result, _raw = await self._async_request_llm(
+            prompt=prompt,
+            model=self.config.default_model,
+            response_format=response_format,
+            temperature=temperature,
+        )
+        return result
+    
+    async def async_parse_chunk_to_meaningful(self, chunk: dict[str, str]) -> dict[str, Any]:
+        """АСИНХРОННАЯ ВЕРСИЯ. Обрабатывает пачку записей для извлечения имен и информации."""
+        try:
+            chunk_json = json.dumps(chunk, ensure_ascii=False)
+        except Exception as exc:
+            self.logger.error("Chunk не может быть сериализован в JSON; "
+                            "возвращаем пустой результат.", exc_info=exc
+            )
+            return {}
+
+        prompt = self._render_prompt(
+            "parse_chunk",
+            chunk_size = len(chunk),
+            chunk_json = chunk_json
+        )
+
+        self.logger.debug("Асинхронный вызов async_ask_llm для async_parse_chunk_to_meaningful",
+                          extra={"chunk_size": len(chunk)}
+        )
+        
+        response = await self.async_ask_llm(prompt, response_format="json_object")
+        if not isinstance(response, dict):
+            self.logger.warning("Ожидался словарь, но получен другой тип; возвращаем {}.")
+            return {}
+        return response

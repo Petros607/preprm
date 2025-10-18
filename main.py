@@ -3,6 +3,7 @@ import datetime
 import logging
 from pathlib import Path
 from typing import Any, Dict, List
+import asyncio
 
 import config
 from llm.llm_client import LlmClient
@@ -16,39 +17,6 @@ from utils.photo_processor import PhotoProcessor
 
 setup_logging(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-SELECT_PERSONS_BASE_QUERY = f"SELECT * FROM {config.result_table_name}"
-
-UPDATE_MEANINGFUL_FIELDS_QUERY = f"""
-    UPDATE {config.result_table_name}
-    SET meaningful_first_name = %s, 
-        meaningful_last_name = %s,
-        meaningful_about = %s
-    WHERE person_id = %s
-"""
-
-UPDATE_LLM_RESULTS_QUERY = f"""
-    UPDATE {config.result_table_name}
-    SET meaningful_first_name = %s, 
-        meaningful_last_name = %s,
-        meaningful_about = %s, 
-        valid = %s
-    WHERE person_id = %s
-"""
-
-UPDATE_SUMMARY_QUERY = f"""
-    UPDATE {config.result_table_name}
-    SET summary = %s, 
-        urls = %s, 
-        confidence = %s
-    WHERE person_id = %s
-"""
-
-UPDATE_PHOTOS_QUERY = f"""
-    UPDATE {config.result_table_name}
-    SET photos = %s
-    WHERE person_id = %s
-"""
 
 
 def clean_and_create_db() -> None:
@@ -104,7 +72,7 @@ def pre_llm() -> None:
 
             about_clean = cleaner.merge_about_fields(about, channel_title, channel_about)
             params = (first_name, last_name, about_clean, person_id)
-            db.execute_query(UPDATE_MEANINGFUL_FIELDS_QUERY, params)
+            db.execute_query(config.UPDATE_MEANINGFUL_FIELDS_QUERY, params)
     finally:
         db.close()
     logger.info("Предварительная обработка завершена.")
@@ -140,7 +108,7 @@ def export_batch_to_db(db: DatabaseManager, parsed_chunk: Dict[str, Dict[str, An
         params = (first_name, last_name, about, is_valid, person_id)
 
         try:
-            result = db.execute_query(UPDATE_LLM_RESULTS_QUERY, params)
+            result = db.execute_query(config.UPDATE_LLM_RESULTS_QUERY, params)
             affected_rows = result[0].get('affected_rows', 0) if result else 0
             if affected_rows > 0:
                 updated_rows_count += 1
@@ -152,8 +120,56 @@ def export_batch_to_db(db: DatabaseManager, parsed_chunk: Dict[str, Dict[str, An
     return updated_rows_count
 
 
-def test_llm(start_position: int, row_count: int) -> None:
-    """Обрабатывает записи партиями (батчами) через LLM для очистки данных.
+async def process_chunk(
+    llm: LlmClient, 
+    db: DatabaseManager, 
+    chunk_to_process: Dict[int, Dict[str, Any]],
+    chunk_index: int
+) -> bool:
+    """
+    Обрабатывает один чанк данных с логикой повторных попыток.
+    Возвращает True в случае успеха, False в случае неудачи.
+    """
+    for attempt in range(config.MAX_RETRIES):
+        logger.info(f"Обработка чанка #{chunk_index}. Попытка {attempt + 1}/{config.MAX_RETRIES}.")
+        
+        try:
+            parsed_chunk = await llm.async_parse_chunk_to_meaningful(chunk_to_process)
+
+            if not isinstance(parsed_chunk, dict) or not parsed_chunk:
+                logger.warning(
+                    f"LLM вернула некорректный результат для чанка #{chunk_index}. "
+                    f"Тип: {type(parsed_chunk)}"
+                )
+                await asyncio.sleep(0.5)
+                continue
+
+            # синхронная функция БД в отдельном потоке, чтобы не блокировать #TODO
+            updated_count = await asyncio.to_thread(export_batch_to_db, db, parsed_chunk)
+            
+            if updated_count == len(chunk_to_process):
+                logger.info(
+                    f"✅ Чанк #{chunk_index} успешно обработан и сохранен в БД "
+                    f"({updated_count} строк)."
+                )
+                return True
+            else:
+                logger.warning(
+                    f"БД обработала чанк #{chunk_index} не полностью "
+                    f"(обновлено {updated_count}/{len(chunk_to_process)}). "
+                )
+                await asyncio.sleep(0.5)
+
+        except Exception as e:
+            logger.error(f"Ошибка при обработке чанка #{chunk_index} на попытке {attempt + 1}: {e}", exc_info=True)
+            await asyncio.sleep(1)
+
+    logger.error(f"❌ Не удалось обработать чанк #{chunk_index} после {config.MAX_RETRIES} попыток. Пропускаем.")
+    return False
+
+
+async def test_llm(start_position: int, row_count: int) -> None:
+    """(async) Обрабатывает записи партиями (батчами) через LLM для очистки данных.
 
     Функция выбирает записи из `result_table_name`, формирует из них батчи
     и отправляет в LlmClient для извлечения осмысленных полей
@@ -167,7 +183,7 @@ def test_llm(start_position: int, row_count: int) -> None:
     logger.info("Начинаем обработку записей через LLM.")
     
     select_query = (
-        f"{SELECT_PERSONS_BASE_QUERY} "
+        f"{config.SELECT_PERSONS_BASE_QUERY} "
         f"ORDER BY person_id"
     )
     if row_count > 0: select_query += f" LIMIT {row_count}"
@@ -183,12 +199,11 @@ def test_llm(start_position: int, row_count: int) -> None:
 
         llm = LlmClient()
         CHUNK_SIZE: int = config.CHUNK_SIZE
-        i = 0
-        retry_count = 0
 
-        while i < total:
+        all_chunks = []
+        for i in range(0, total, CHUNK_SIZE):
             right_index = min(i + CHUNK_SIZE, total)
-            chunk_to_process: Dict[int, Dict[str, Any]] = {
+            chunk = {
                 index: {
                     "person_id": row.get('person_id'),
                     "first_name": row.get('meaningful_first_name', ''),
@@ -196,36 +211,28 @@ def test_llm(start_position: int, row_count: int) -> None:
                     "about": row.get('meaningful_about', '')
                 } for index, row in enumerate(records[i:right_index])
             }
+            all_chunks.append(chunk)
+        
+        logger.info(f"Подготовлено {len(all_chunks)} чанков для обработки.")
 
-            parsed_chunk = llm.parse_chunk_to_meaningful(chunk_to_process)
-
-            if not isinstance(parsed_chunk, dict):
-                logger.warning(
-                    f"LLM вернула некорректный тип данных ({type(parsed_chunk)}) "
-                    f"для батча {i}-{right_index}. Попытка №{retry_count + 1}."
-                )
-                retry_count += 1
-            else:
-                updated_count = export_batch_to_db(db, parsed_chunk)
-                if updated_count == len(chunk_to_process):
-                    i += CHUNK_SIZE
-                    retry_count = 0
-                    logger.info(
-                        f"Обработано {min(i, total)} / {total} записей. "
-                        f"БД успешно обновила {updated_count} строк."
-                    )
-                else:
-                    logger.warning(
-                        f"Батч {i}-{right_index} обработан не полностью "
-                        f"(обновлено {updated_count}/{len(chunk_to_process)}). "
-                        f"Попытка №{retry_count + 1}."
-                    )
-                    retry_count += 1
+        semaphore = asyncio.Semaphore(config.ASYNC_CONCURRENT_REQUESTS)
+        async def worker_with_semaphore(chunk, index):
+            async with semaphore:
+                return await process_chunk(llm, db, chunk, index)
             
-            if retry_count >= 3:
-                    logger.error(f"Не удалось обработать батч {i}-{right_index} после 3 попыток. Пропускаем.")
-                    i += CHUNK_SIZE
-                    retry_count = 0
+        tasks = [
+            worker_with_semaphore(chunk, i) 
+            for i, chunk in enumerate(all_chunks)
+        ]
+
+        results = await asyncio.gather(*tasks)
+        
+        successful_chunks = sum(1 for res in results if res)
+        logger.info(
+            f"Обработка завершена. Успешно обработано: "
+            f"{successful_chunks}/{len(all_chunks)} чанков."
+        )
+
     finally:
         db.close()
     logger.info("Обработка записей через LLM завершена.")
@@ -270,7 +277,7 @@ def test_perpsearch(start_position: int, row_count: int, md_flag: bool) -> None:
     logger.info("Начинаем поиск информации через PerplexityClient.")
     
     select_query = (
-        f"{SELECT_PERSONS_BASE_QUERY} "
+        f"{config.SELECT_PERSONS_BASE_QUERY} "
         f"WHERE valid ORDER BY person_id"
     )
     if row_count > 0: select_query += f" LIMIT {row_count}"
@@ -311,7 +318,7 @@ def test_perpsearch(start_position: int, row_count: int, md_flag: bool) -> None:
                 search_result.get("confidence") if is_summary_valid else "low",
                 person_id
             )
-            db.execute_query(UPDATE_SUMMARY_QUERY, params)
+            db.execute_query(config.UPDATE_SUMMARY_QUERY, params)
 
             if exporter and is_summary_valid:
                 export_person_to_md(
@@ -340,7 +347,7 @@ def test_searching_photos() -> None:
     logger.info("Начинаем поиск и анализ фотографий.")
 
     select_query = f"""
-        {SELECT_PERSONS_BASE_QUERY}
+        {config.SELECT_PERSONS_BASE_QUERY}
         WHERE valid AND summary IS NOT NULL AND TRIM(summary) != ''
         ORDER BY person_id
     """
@@ -383,7 +390,7 @@ def test_searching_photos() -> None:
 
             if len(main_cluster) >= config.MIN_PHOTOS_IN_CLUSTER:
                 params = (main_cluster, person_id)
-                db.execute_query(UPDATE_PHOTOS_QUERY, params)
+                db.execute_query(config.UPDATE_PHOTOS_QUERY, params)
                 logger.info(
                     f"✅ Для {person_id} найден и сохранен кластер из {len(main_cluster)} фотографий."
                 )
@@ -401,7 +408,7 @@ def export_to_html() -> None:
     db = DatabaseManager()
     try:
         select_query: str = f"""
-            {SELECT_PERSONS_BASE_QUERY}
+            {config.SELECT_PERSONS_BASE_QUERY}
             WHERE valid AND summary IS NOT NULL
             AND TRIM(summary) != '' ORDER BY person_id
         """
@@ -436,7 +443,7 @@ def export_to_html() -> None:
         logger.error(f"Неожиданная ошибка при создании HTML: {e}")
 
 
-def main() -> None:
+async def main() -> None:
     """
     Главная функция для запуска утилиты из командной строки.
     """
@@ -475,7 +482,7 @@ def main() -> None:
     elif args.pre_llm:
         pre_llm()
     elif args.llm:
-        test_llm(start_position=args.start, row_count=args.count)
+        await test_llm(start_position=args.start, row_count=args.count)
     elif args.mdsearch:
         test_perpsearch(start_position=args.start, row_count=args.count, md_flag=args.md)
     elif args.photos:
@@ -487,4 +494,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
