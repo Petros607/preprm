@@ -1,6 +1,7 @@
 import logging
 from io import BytesIO
 from urllib.parse import urljoin
+from pathlib import Path
 
 import config
 import face_recognition
@@ -41,8 +42,30 @@ class PhotoProcessor:
             response.raise_for_status()
             return response.content
         except requests.RequestException as e:
-            logger.warning(f"Ошибка запроса к URL {url}: {e}")
+            logger.debug(f"Ошибка запроса к URL {url}: {e}")
             return None
+        
+    def _get_image_data(self, source: str) -> bytes | None:
+        """
+        Получает бинарные данные изображения из источника.
+        Источник может быть URL-адресом или локальным путем к файлу.
+
+        :param source: URL или локальный путь.
+        :return: Содержимое файла в байтах или None.
+        """
+        if source.startswith(('http://', 'https://')):
+            return self._fetch_url_content(source)
+        else:
+            try:
+                path = Path(source)
+                if path.is_file():
+                    return path.read_bytes()
+                else:
+                    logger.warning(f"Локальный файл не найден по пути: {source}")
+                    return None
+            except Exception as e:
+                logger.error(f"Ошибка чтения локального файла {source}: {e}")
+                return None
 
     def extract_image_urls_from_page(self, page_url: str) -> list[str]:
         """
@@ -75,12 +98,12 @@ class PhotoProcessor:
 
     def _get_image_from_url(self, image_url: str) -> np.ndarray | None:
         """
-        Загружает изображение по URL и конвертирует его в numpy-массив.
+        Загружает изображение по URL или локальному пути и конвертирует его в numpy-массив.
 
         :param image_url: URL-адрес изображения.
         :return: Изображение в формате numpy-массива или None.
         """
-        content = self._fetch_url_content(image_url)
+        content = self._get_image_data(image_url)
         if not content:
             return None
 
@@ -117,7 +140,7 @@ class PhotoProcessor:
         :param image_url: URL-адрес изображения.
         :return: Эмбеддинг лица или None.
         """
-        image = self._fetch_url_content(image_url)
+        image = self._get_image_data(image_url)
         if image is None:
             return None
 

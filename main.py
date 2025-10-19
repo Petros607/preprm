@@ -75,7 +75,7 @@ def pre_llm() -> None:
             db.execute_query(config.UPDATE_MEANINGFUL_FIELDS_QUERY, params)
     finally:
         db.close()
-    logger.info("Предварительная обработка завершена.")
+    logger.info("✅ Предварительная обработка завершена.")
 
 
 def export_batch_to_db(db: DatabaseManager, parsed_chunk: dict[str, dict[str, Any]]) -> int:
@@ -230,13 +230,13 @@ async def test_llm(start_position: int, row_count: int) -> None:
 
         successful_chunks = sum(1 for res in results if res)
         logger.info(
-            f"Обработка завершена. Успешно обработано: "
+            f"✅ Обработка завершена. Успешно обработано: "
             f"{successful_chunks}/{len(all_chunks)} чанков."
         )
 
     finally:
         db.close()
-    logger.info("Обработка записей через LLM завершена.")
+    logger.info("✅ Обработка записей через LLM завершена.")
 
 
 def export_person_to_md(
@@ -358,24 +358,19 @@ async def test_perpsearch(start_position: int, row_count: int, md_flag: bool) ->
 
     finally:
         db.close()
-    logger.info("Поиск информации завершен.")
+    logger.info("✅ Поиск информации завершен.")
 
 
 def test_searching_photos() -> None:
-    """Ищет, анализирует и кластеризует фотографии для персон.
-
-    Функция выполняет следующие шаги:
-    1. Выбирает из БД персон с валидным и заполненным полем summary.
-    2. Извлекает URL всех изображений со страниц, связанных с персоной.
-    3. Фильтрует изображения, оставляя только те, на которых обнаружено одно человеческое лицо.
-    4. Кластеризует отфильтрованные фото по схожести лиц.
-    5. Выбирает самый большой кластер и, если он достаточно велик, сохраняет его в БД.
+    """
+    Ищет, анализирует и кластеризует фото из веба и файлов.
+    Если кластер не найден, сохраняет локальные фото с лицами.
     """
     logger.info("Начинаем поиск и анализ фотографий.")
 
     select_query = f"""
         {config.SELECT_PERSONS_BASE_QUERY}
-        WHERE valid AND summary IS NOT NULL AND TRIM(summary) != ''
+        WHERE valid AND summary IS NOT NULL AND TRIM(summary) != '' and person_id=57844602
         ORDER BY person_id
     """
 
@@ -395,32 +390,61 @@ def test_searching_photos() -> None:
 
             logger.info(f"[{i}/{total}] Обработка фотографий для person_id: {person_id}")
 
-            if not person_urls:
-                continue
+            web_image_urls = []
+            if person_urls:
+                for url in person_urls:
+                    web_image_urls.extend(photo_processor.extract_image_urls_from_page(url))
+                logger.debug(f"Найдено {len(web_image_urls)} изображений в вебе для person_id: {person_id}")
 
-            all_image_urls = []
-            for url in person_urls:
-                all_image_urls.extend(photo_processor.extract_image_urls_from_page(url))
+            local_avatars = []
+            avatars_dir = Path(config.PATH_PRM_MEDIA) / str(person_id) / config.PATH_PERSON_TG_AVATARS
+            if avatars_dir.is_dir():
+                found_files = list(avatars_dir.glob('*.jpg'))
+                local_avatars = [str(p) for p in found_files]
+                logger.debug(f"Найдено {len(local_avatars)} локальных аватаров в {avatars_dir} для person_id: {person_id}")
 
-            human_face_images = [
-                img_url for img_url in set(all_image_urls)
-                if photo_processor.is_single_human_face(img_url)
+            web_human_face_images = [
+                url for url in set(web_image_urls)
+                if photo_processor.is_single_human_face(url)
             ]
-            if not human_face_images:
+
+            local_human_face_images = [
+                path for path in set(local_avatars)
+                if photo_processor.is_single_human_face(path)
+            ]
+
+            all_human_face_images = web_human_face_images + local_human_face_images
+            
+            if not all_human_face_images:
+                logger.warning(f"❌ Найдено {len(web_human_face_images)} веб-фото с лицом и {len(local_human_face_images)} локальных фото с лицом для person_id: {person_id}.")
                 continue
 
-            clusters = photo_processor.cluster_faces(human_face_images)
+            logger.info(f"Найдено {len(web_human_face_images)} веб-фото с лицом и {len(local_human_face_images)} локальных фото с лицом для person_id: {person_id}.")
+
+            clusters = photo_processor.cluster_faces(all_human_face_images)
             if not clusters:
+                logger.warning("❌ Кластеры не сформированы. Проверяем наличие локальных фото с лицами.")
+                if local_human_face_images:
+                    logger.info(f"❌✅ Сохраняем {len(local_human_face_images)} локальных фото с лицами как запасной вариант.")
+                    params = (local_human_face_images, person_id)
+                    db.execute_query(config.UPDATE_PHOTOS_QUERY, params)
+                else:
+                    logger.info("❌❌ Локальных фото с лицами для сохранения не найдено.")
                 continue
 
             main_cluster = max(clusters, key=len)
-
             if len(main_cluster) >= config.MIN_PHOTOS_IN_CLUSTER:
                 params = (main_cluster, person_id)
                 db.execute_query(config.UPDATE_PHOTOS_QUERY, params)
                 logger.info(
                     f"✅ Для {person_id} найден и сохранен кластер из {len(main_cluster)} фотографий."
                 )
+            else:
+                logger.warning(f"Самый большой кластер ({len(main_cluster)} фото) слишком мал. Проверяем локальные фото.")
+                if local_human_face_images:
+                    logger.info(f"Сохраняем {len(local_human_face_images)} локальных фото с лицами вместо маленького кластера.")
+                    params = (local_human_face_images, person_id)
+                    db.execute_query(config.UPDATE_PHOTOS_QUERY, params)
     finally:
         db.close()
     logger.info("Поиск и анализ фотографий завершен.")
@@ -462,7 +486,7 @@ def export_to_html() -> None:
 
         result_filename = "people_analysis.html"
         Path(result_filename).write_text(final_html, encoding='utf-8')
-        logger.info(f"HTML-таблица успешно сохранена в файл: {result_filename}")
+        logger.info(f"✅ HTML-таблица успешно сохранена в файл: {result_filename}")
 
     except FileNotFoundError as e:
         logger.error(f"Ошибка: файл шаблона или стилей не найден: {e}")
