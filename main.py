@@ -4,6 +4,8 @@ import datetime
 import logging
 from pathlib import Path
 from typing import Any
+import base64
+import mimetypes
 
 import config
 from jinja2 import Environment, FileSystemLoader
@@ -478,6 +480,28 @@ def export_to_html() -> None:
 
         for person in persons:
             person['summary'] = cleaner.clean_summary(person.get('summary', ''))
+            photo_sources = person.get('photos') or []
+            local_photos = []
+            web_photos = []
+            for src in photo_sources:
+                if src and src.startswith('prm_media/'):
+                    try:
+                        file_path = Path(src)
+                        mime_type, _ = mimetypes.guess_type(file_path)
+                        if not mime_type: mime_type = 'image/jpeg'
+                    
+                        encoded_data = base64.b64encode(file_path.read_bytes()).decode('ascii')
+                        base64_uri = f"data:{mime_type};base64,{encoded_data}"
+                        if base64_uri:
+                            local_photos.append(base64_uri)
+                    except FileNotFoundError:
+                        logger.warning(f"Локальный файл не найден, пропуск: {src}")
+                    except Exception as e:
+                        logger.error(f"Ошибка кодирования файла {src}: {e}")
+                elif src:
+                    web_photos.append(src)
+            person['web_photos'] = web_photos
+            person['local_photos'] = local_photos
 
         final_html = template.render(
             people=persons,

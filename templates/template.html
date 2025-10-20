@@ -71,17 +71,39 @@
                         </td>
                         
                         <td class="photos-section">
-                            <div class="photos-grid">
-                                {% if person.photos %}
-                                    {% for photo_url in person.photos %}
-                                    <div class="photo-item">
-                                        <img src="{{ photo_url }}" alt="Фото" onerror="this.style.display='none'" loading="lazy">
+                            {% if person.local_photos or person.web_photos %}
+
+                                <!-- Отдельный блок для локальных фото -->
+                                {% if person.local_photos %}
+                                    <div class="photo-category">
+                                        <h4 class="photo-category-title">Локальные фото:</h4>
+                                        <div class="photos-grid">
+                                            {% for photo_src in person.local_photos %}
+                                            <div class="photo-item">
+                                                <img src="{{ photo_src }}" alt="Локальное фото" onerror="this.style.display='none'" loading="lazy">
+                                            </div>
+                                            {% endfor %}
+                                        </div>
                                     </div>
-                                    {% endfor %}
-                                {% else %}
-                                    <div class="photo-placeholder">Нет фото</div>
                                 {% endif %}
-                            </div>
+
+                                <!-- Отдельный блок для веб-фото -->
+                                {% if person.web_photos %}
+                                    <div class="photo-category">
+                                        <h4 class="photo-category-title">Найденные в интернете:</h4>
+                                        <div class="photos-grid">
+                                            {% for photo_src in person.web_photos %}
+                                            <div class="photo-item">
+                                                <img src="{{ photo_src }}" alt="Веб фото" onerror="this.style.display='none'" loading="lazy">
+                                            </div>
+                                            {% endfor %}
+                                        </div>
+                                    </div>
+                                {% endif %}
+
+                            {% else %}
+                                <div class="photo-placeholder">Нет фото</div>
+                            {% endif %}
                         </td>
                     </tr>
                 {% else %}
