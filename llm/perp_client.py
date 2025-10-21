@@ -231,6 +231,7 @@ class PerplexityClient(BaseLLMClient):
         first_name: str,
         last_name: str,
         about: str,
+        extracted_links: list[str],
         birth_date: str | None = None,
         personal_channel_name: str | None = None,
         personal_channel_about: str | None = None
@@ -241,6 +242,10 @@ class PerplexityClient(BaseLLMClient):
             f"- Фамилия: {last_name}",
             f"- Доп. информация: {about}",
         ]
+        if extracted_links:
+            links_str = ", ".join(extracted_links)
+            pieces.append(f"- Найденные ссылки и профили: {links_str}")
+            
         prompt = self._render_prompt(
             "perp_search",
             pieces=pieces

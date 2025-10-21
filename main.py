@@ -79,7 +79,6 @@ def pre_llm() -> None:
                 about,
                 channel_about
             )
-            print(person_extracted_links)
 
             if first_name and ' ' in first_name and not last_name:
                 parts = first_name.split(' ', 1)
@@ -120,7 +119,11 @@ def export_batch_to_db(db: DatabaseManager, parsed_chunk: dict[str, dict[str, An
         last_name = data.get('meaningful_last_name')
         about = data.get('meaningful_about')
 
-        is_valid = bool(first_name and last_name and about)
+        #TODO: может не здесь нужно сразу расставлять valid
+        person_extracted_links = db.execute_query(f"SELECT extracted_links FROM {config.result_table_name} WHERE person_id={person_id}")
+        extracted_links = person_extracted_links[0].get("extracted_links", None)
+
+        is_valid = bool(first_name and last_name and (about or extracted_links))
         params = (first_name, last_name, about, is_valid, person_id)
 
         try:
@@ -295,6 +298,7 @@ async def process_person_for_search(
             first_name=person.get("meaningful_first_name", ""),
             last_name=person.get("meaningful_last_name", ""),
             about=person.get("meaningful_about", ""),
+            extracted_links=person.get("extracted_links", [])
         )
 
         summary = search_result.get("summary")
@@ -386,7 +390,7 @@ def test_searching_photos() -> None:
 
     select_query = f"""
         {config.SELECT_PERSONS_BASE_QUERY}
-        WHERE valid AND summary IS NOT NULL AND TRIM(summary) != '' and person_id=57844602
+        WHERE valid AND summary IS NOT NULL AND TRIM(summary) != ''
         ORDER BY person_id
     """
 
@@ -410,6 +414,8 @@ def test_searching_photos() -> None:
             if person_urls:
                 for url in person_urls:
                     web_image_urls.extend(photo_processor.extract_image_urls_from_page(url))
+                    if len(web_image_urls) > 50:
+                        web_image_urls = [] #TODO: когда слишком много фоток, алгоритм тупит
                 logger.debug(f"Найдено {len(web_image_urls)} изображений в вебе для person_id: {person_id}")
 
             local_avatars = []

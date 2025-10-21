@@ -123,7 +123,10 @@ class DatabaseManager:
         """
         if drop_table:
             drop_query = f"DROP TABLE IF EXISTS {result_table_name};"
-            if not self._execute_with_transaction(drop_query, "удаление таблицы"):
+            if not self._execute_with_transaction(
+                drop_query, 
+                f"удаление таблицы {result_table_name}"
+            ):
                 return False
 
         query = f"""
