@@ -58,14 +58,28 @@ def pre_llm() -> None:
             FROM {config.result_table_name} ORDER BY person_id
         """
         persons = db.execute_query(select_query)
+        fields_to_normalize = [
+            'person_id', 'first_name','last_name',
+            'about', 'personal_channel_title', 'personal_channel_about'
+        ]
 
         for person in persons:
-            person_id = cleaner.normalize_empty(person.get('person_id'))
-            first_name = cleaner.clean_name_field(cleaner.normalize_empty(person.get('first_name')))
-            last_name = cleaner.clean_second_name_field(cleaner.normalize_empty(person.get('last_name')))
-            about = cleaner.normalize_empty(person.get('about'))
-            channel_title = cleaner.normalize_empty(person.get('personal_channel_title'))
-            channel_about = cleaner.normalize_empty(person.get('personal_channel_about'))
+            for field in fields_to_normalize:
+                person[field] = cleaner.normalize_empty(person.get(field))
+
+            person_id = person.get('person_id')
+            first_name = cleaner.clean_name_field(person.get('first_name'))
+            last_name = cleaner.clean_second_name_field(person.get('last_name'))
+            about = person.get('about')
+            channel_title = person.get('personal_channel_title')
+            channel_about = person.get('personal_channel_about')
+
+            person_extracted_links = cleaner.extract_links(
+                last_name,
+                about,
+                channel_about
+            )
+            print(person_extracted_links)
 
             if first_name and ' ' in first_name and not last_name:
                 parts = first_name.split(' ', 1)
@@ -73,7 +87,7 @@ def pre_llm() -> None:
                     first_name, last_name = parts
 
             about_clean = cleaner.merge_about_fields(about, channel_title, channel_about)
-            params = (first_name, last_name, about_clean, person_id)
+            params = (first_name, last_name, about_clean, person_extracted_links, person_id)
             db.execute_query(config.UPDATE_MEANINGFUL_FIELDS_QUERY, params)
     finally:
         db.close()
@@ -523,16 +537,16 @@ async def main() -> None:
     Главная функция для запуска утилиты из командной строки.
     """
     parser = argparse.ArgumentParser(description="Инструменты для поиска информации с помощью LLM.")
-    parser.add_argument("--clean-db", action="store_true",
+    parser.add_argument("--dbcreate", action="store_true",
                         help="Очистка и подготовка базы данных"
     )
-    parser.add_argument("--pre-llm", action="store_true",
+    parser.add_argument("--prellm", action="store_true",
                         help="Предобработка данных"
     )
     parser.add_argument("--llm", action="store_true",
                         help="Обработка записей через LLM"
     )
-    parser.add_argument("--search", action="store_true",
+    parser.add_argument("--perp", action="store_true",
                         help="Поиск информации и экспорт в Markdown"
     )
     parser.add_argument("--photos", action="store_true",
@@ -547,22 +561,22 @@ async def main() -> None:
     parser.add_argument("--md", action="store_true", default=False,
                         help="Разрешить экспорт в md"
     )
-    parser.add_argument("--to-html", action="store_true",
+    parser.add_argument("--html", action="store_true",
                         help="Экспорт в html таблицу"
     )
     args = parser.parse_args()
 
-    if args.clean_db:
+    if args.dbcreate:
         clean_and_create_db()
-    elif args.pre_llm:
+    elif args.prellm:
         pre_llm()
     elif args.llm:
         await test_llm(start_position=args.start, row_count=args.count)
-    elif args.search:
+    elif args.perp:
         await test_perpsearch(start_position=args.start, row_count=args.count, md_flag=args.md)
     elif args.photos:
         test_searching_photos()
-    elif args.to_html:
+    elif args.html:
         export_to_html()
     else:
         parser.print_help()

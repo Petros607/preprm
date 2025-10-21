@@ -157,6 +157,7 @@ class DatabaseManager:
             '' AS meaningful_first_name,
             '' AS meaningful_last_name,
             '' AS meaningful_about,
+            ARRAY[]::text[] AS extracted_links,
             '' AS summary,
             ARRAY[]::text[] AS urls,
             ARRAY[]::text[] AS photos

@@ -64,7 +64,8 @@ UPDATE_MEANINGFUL_FIELDS_QUERY = f"""
     UPDATE {result_table_name}
     SET meaningful_first_name = %s,
         meaningful_last_name = %s,
-        meaningful_about = %s
+        meaningful_about = %s,
+        extracted_links = %s
     WHERE person_id = %s
 """
 UPDATE_LLM_RESULTS_QUERY = f"""
